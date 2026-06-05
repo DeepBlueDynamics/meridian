@@ -1,0 +1,1 @@
+mcp_tools = ["agent-chat.py", "calculate.py", "gnosis-crawl.py", "gnosis-files-basic.py", "gnosis-files-diff.py", "gnosis-files-search.py", "iching-tool.py", "log-reader.py", "mcp-config.py", "monitor-env.py", "monitor-scheduler.py", "monitor-status.py", "session-tools.py", "sticky-notes.py", "time-tool.py"]

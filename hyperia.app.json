@@ -1,0 +1,33 @@
+{
+  "schema": "hyperia.app/v1",
+  "id": "meridian",
+  "name": "Meridian",
+  "description": "Maritime chart application — 2D/3D charts, OpenSeaMap overlays, terrain.",
+  "icon": "ti ti-anchor",
+  "kind": "web",
+  "repo": "deepbluedynamics/meridian",
+  "build": {
+    "install": "npm ci",
+    "command": "npm run build",
+    "outDir": "dist"
+  },
+  "serve": {
+    "type": "static",
+    "dir": "dist",
+    "spa": true,
+    "mountPath": "/apps/meridian/"
+  },
+  "endpoints": [
+    {
+      "path": "/anthropic/*",
+      "kind": "proxy",
+      "target": "https://api.anthropic.com",
+      "secretEnv": "ANTHROPIC_API_KEY",
+      "optional": true,
+      "note": "Claude-powered search. Host must proxy + inject the key; feature is optional and degrades off when absent."
+    }
+  ],
+  "env": {
+    "VITE_ANTHROPIC_API_KEY": "optional — enables Claude-powered geocoding search"
+  }
+}

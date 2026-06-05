@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>meridian-terminal</title>
+    <script>
+      window.addEventListener('error', function(e) {
+        var div = document.getElementById('error-display') || document.createElement('div');
+        div.id = 'error-display';
+        div.style.color = 'red';
+        div.style.padding = '20px';
+        div.style.background = 'black';
+        div.style.position = 'fixed';
+        div.style.top = '0';
+        div.style.left = '0';
+        div.style.right = '0';
+        div.style.zIndex = '99999';
+        div.innerText = 'JS Error: ' + e.message + ' at ' + e.filename + ':' + e.lineno + ':' + e.colno;
+        document.body.appendChild(div);
+      });
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
