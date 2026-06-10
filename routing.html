@@ -380,7 +380,9 @@ function computeSamples(){ const n=6,out=[];
     out.push({ lat:+(START.lat+(DEST.lat-START.lat)*f).toFixed(2), lon:+(START.lon+(DEST.lon-START.lon)*f).toFixed(2) }); }
   return out; }
 let WIND_SAMPLES=computeSamples();
-const MAX_HOURS=240, ARRIVAL_TOL_NM=5;
+// 360 h = the full 15-day ECMWF window — a 2,000 nm passage (Hawaii→Marquesas)
+// needs ~300 h; the old 240 h cap guaranteed zero arrivals on long legs.
+const MAX_HOURS=360, ARRIVAL_TOL_NM=5;
 
 // Motoring settings (PredictWind-style threshold model), persisted.
 function loadMotoring(){
@@ -426,8 +428,13 @@ async function refreshLandAnchors(loaderSub){
     const w=Math.min(START.lon,DEST.lon)-4, e=Math.max(START.lon,DEST.lon)+4;
     const raster=await L.buildRaster(w,s,e,n,0.02,(f)=>{ if(loaderSub)loaderSub.textContent=`Coastline raster · ${Math.round(f*100)}%`; });
     // Anchors snap to water in the DILATED raster, so approaches stay legal.
-    depAnchor=raster.nearestWater(START.lat,START.lon,15)||{lat:START.lat,lon:START.lon};
-    arrAnchor=raster.nearestWater(DEST.lat,DEST.lon,15)||{lat:DEST.lat,lon:DEST.lon};
+    // 60 nm reach: geocoders happily return island/state centroids ("Hawaii,
+    // United States" sits on Mauna Loa, 40 nm inland) — better to route from
+    // the nearest coast than to strand the fleet on a volcano.
+    depAnchor=raster.nearestWater(START.lat,START.lon,60);
+    arrAnchor=raster.nearestWater(DEST.lat,DEST.lon,60);
+    if(!depAnchor)throw new Error(`No sailable water within 60 nm of "${START.name}" — pick a coastal departure port.`);
+    if(!arrAnchor)throw new Error(`No sailable water within 60 nm of "${DEST.name}" — pick a coastal arrival port.`);
     activeLandGuard=makeLandGuard(depAnchor,arrAnchor,raster);
   }else{
     depAnchor={lat:START.lat,lon:START.lon}; arrAnchor={lat:DEST.lat,lon:DEST.lon}; activeLandGuard=null;
@@ -787,7 +794,8 @@ function updatePanel(routes,envelope,prunedCount){
   const mrM=medianRoute(routes);
   set('engHours',MOTORING.enabled&&mrM?(mrM.engineHours||0).toFixed(0)+' h':'— off');
   set('engPct',MOTORING.enabled&&mrM?Math.round((mrM.pctMotor||0)*100)+'%':'— off');
-  const mid=envelope[Math.floor(envelope.length/2)]; set('spreadMid','±'+Math.round((mid.lat95-mid.lat5)*60/2)+' nm');
+  const mid=envelope.length?envelope[Math.floor(envelope.length/2)]:null;
+  set('spreadMid',mid?'±'+Math.round((mid.lat95-mid.lat5)*60/2)+' nm':'—');
   updateEtaNowLine();
 }
 function makeEnv(){
@@ -871,6 +879,8 @@ async function loadLiveAndRoute(){
     await refreshLandAnchors(loaderSub);
     loaderText.textContent=`Isochrone routing · ${members.length} members`;
     const routes=await window.Router.routeFleet(members,makeEnv(),(i,n)=>{ loaderSub.textContent=`Optimal route · member ${i}/${n}`; loaderBar.style.width=(70+i/n*30)+'%'; });
+    if(!routes.some(r=>r.path.length>=2))
+      throw new Error('The fleet could not leave the departure anchor — it appears to be landlocked. Pick a coastal departure port.');
     lastRoutes=routes;
     const kept=markOutliers(routes);
     const envelope=computeEnvelope(kept);
@@ -885,7 +895,7 @@ async function loadLiveAndRoute(){
       cBtn.onclick=()=>{ useCurrents=!useCurrents; cBtn.classList.toggle('active',useCurrents); cState.textContent=useCurrents?'ON':'OFF'; rerouteAndRender(); }; }
     loader.classList.add('hidden');
   }catch(err){ console.error(err); if(window.Telemetry)window.Telemetry.send('live-fetch-failed',{message:err.message,stack:err.stack});
-    loader.querySelector('.ring').style.display='none'; loaderText.textContent='Could not fetch live data'; loaderSub.textContent='';
+    loader.querySelector('.ring').style.display='none'; loaderText.textContent='Routing failed'; loaderSub.textContent='';
     const e=document.createElement('div'); e.className='err-detail'; e.innerHTML=`<strong>Error:</strong> ${err.message.replace(/</g,'&lt;')}`; loader.appendChild(e);
     document.getElementById('liveStamp').className='err'; document.getElementById('liveStamp').textContent='Connection failed'; }
 }
