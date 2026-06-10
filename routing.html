@@ -894,7 +894,9 @@ async function loadLiveAndRoute(){
     else{ cBtn.disabled=false; cBtn.classList.toggle('active',useCurrents); cState.textContent=useCurrents?'ON':'OFF'; cSrc.textContent=`SMOC · ${currentsAvail}/${marineResults.length} pts`;
       cBtn.onclick=()=>{ useCurrents=!useCurrents; cBtn.classList.toggle('active',useCurrents); cState.textContent=useCurrents?'ON':'OFF'; rerouteAndRender(); }; }
     loader.classList.add('hidden');
-  }catch(err){ console.error(err); if(window.Telemetry)window.Telemetry.send('live-fetch-failed',{message:err.message,stack:err.stack});
+  }catch(err){ console.error(err);
+    if(window.Telemetry)window.Telemetry.send('live-fetch-failed',{message:err.message,stack:err.stack,
+      dep:START.name,arr:DEST.name,depCoord:[START.lat,START.lon],arrCoord:[DEST.lat,DEST.lon],depAnchor,arrAnchor});
     loader.querySelector('.ring').style.display='none'; loaderText.textContent='Routing failed'; loaderSub.textContent='';
     const e=document.createElement('div'); e.className='err-detail'; e.innerHTML=`<strong>Error:</strong> ${err.message.replace(/</g,'&lt;')}`; loader.appendChild(e);
     document.getElementById('liveStamp').className='err'; document.getElementById('liveStamp').textContent='Connection failed'; }
