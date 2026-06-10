@@ -1,0 +1,906 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>MERIDIAN — Ensemble Routing (3D Tiles)</title>
+<link href="https://cdnjs.cloudflare.com/ajax/libs/cesium/1.124.0/Widgets/widgets.min.css" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Public+Sans:wght@300;400;500;600;700&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg:#0a0f18; --bg-2:#131a26; --line:#1f2a3d; --line-bright:#324863;
+    --ink:#e8ecf3; --ink-dim:#9ba8bd; --ink-faint:#54627c; --ink-fade:#2a3548;
+    --member:#6b9dd9; --envelope:#f9a826; --mean:#f4f7fc;
+    --hot:#e94560; --cool:#4ecdc4; --warn:#ffb938;
+    --serif:'Instrument Serif',serif; --sans:'Public Sans',sans-serif; --mono:'Fira Code',monospace;
+  }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100vh; background:var(--bg); color:var(--ink); font-family:var(--sans); overflow:hidden; }
+  #app { display:grid; grid-template-rows:auto 1fr; height:100vh; }
+
+  header { padding:12px 22px; background:linear-gradient(180deg,#060a13,var(--bg)); border-bottom:1px solid var(--line);
+    display:flex; align-items:baseline; justify-content:space-between; gap:20px; }
+  .brand { display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
+  .brand .title { font-family:var(--serif); font-size:26px; color:var(--ink); letter-spacing:0.08em; }
+  .brand .subtitle { font-family:var(--mono); font-size:9px; letter-spacing:0.3em; display:flex; gap:6px; }
+  .brand .subtitle .deep { color:#fff; } .brand .subtitle .blue { color:#4fa3ff; } .brand .subtitle .dyn { color:#9ba8bd; }
+  /* DEP / ARR / DIST boxes */
+  .route { display:flex; align-items:stretch; gap:10px; }
+  .rbox, .rdist { display:flex; flex-direction:column; justify-content:center; gap:3px; border:1px solid var(--line-bright); border-radius:5px; padding:5px 13px; background:rgba(10,15,24,0.45); }
+  .rbox .rlabel, .rdist .rlabel { font-family:var(--mono); font-size:9px; letter-spacing:0.25em; }
+  .rbox.dep .rlabel { color:var(--cool); }
+  .rbox.arr .rlabel { color:var(--hot); }
+  .rbox .rplace { font-size:15px; color:var(--ink); font-weight:600; line-height:1.05; }
+  .rbox .rcoord { font-family:var(--mono); font-size:9px; color:var(--ink-faint); }
+  .rarrow { align-self:center; color:var(--ink-faint); font-size:16px; }
+  .rbox.click { cursor:pointer; }
+  .rbox.click:hover { border-color:var(--ink-dim); background:rgba(155,168,189,0.10); }
+  .port-search { position:fixed; z-index:60; width:320px; background:var(--bg-2); border:1px solid var(--line-bright);
+    box-shadow:0 10px 34px rgba(0,0,0,0.55); padding:9px; }
+  .port-search input { width:100%; padding:8px 10px; background:var(--bg); border:1px solid var(--line-bright);
+    color:var(--ink); font-family:var(--mono); font-size:12px; outline:none; }
+  .port-search input:focus { border-color:var(--envelope); }
+  .port-search .res { display:flex; flex-direction:column; margin-top:6px; max-height:250px; overflow-y:auto; }
+  .port-search .res button { text-align:left; padding:7px 10px; background:transparent; border:none; border-bottom:1px solid var(--line);
+    color:var(--ink-dim); font-family:var(--mono); font-size:11px; cursor:pointer; }
+  .port-search .res button:hover { color:var(--ink); background:rgba(155,168,189,0.07); }
+  .port-search .res button .co { color:var(--ink-faint); font-size:9px; }
+  .port-search .hint { font-family:var(--mono); font-size:9px; color:var(--ink-faint); margin-top:7px; letter-spacing:0.08em; }
+  .pane.focus { outline:2px solid var(--cool); outline-offset:-2px; }
+  .rdist { border-color:var(--envelope); background:rgba(249,168,38,0.07); }
+  .rdist .rlabel { color:var(--envelope); }
+  .rdist .rplace { font-family:var(--mono); font-size:16px; color:var(--envelope); font-weight:600; line-height:1.05; }
+  .rdist.wx { border-color:var(--cool); background:rgba(78,205,196,0.07); }
+  .rdist.wx .rlabel, .rdist.wx .rplace { color:var(--cool); }
+  .rdist.gust { border-color:var(--hot); background:rgba(233,69,96,0.07); }
+  .rdist.gust .rlabel, .rdist.gust .rplace { color:var(--hot); }
+  .rdist .rsub { font-family:var(--mono); font-size:9px; color:var(--ink-faint); }
+  .stamp { font-family:var(--mono); font-size:10px; color:var(--ink-faint); letter-spacing:0.15em; text-transform:uppercase; display:flex; gap:10px; align-items:center; }
+  .stamp .nv { color:var(--ink-dim); text-decoration:none; border:1px solid var(--line-bright); padding:4px 9px; border-radius:3px; letter-spacing:0.12em; }
+  .stamp .nv:hover { color:var(--ink); }
+  .stamp .nv.active { color:var(--envelope); border-color:var(--envelope); }
+  .stamp .live { color:var(--cool); display:inline-flex; align-items:center; gap:6px; }
+  .stamp .live::before { content:''; width:6px; height:6px; border-radius:50%; background:var(--cool); animation:pulse 1.6s ease-in-out infinite; }
+  .stamp .err { color:var(--hot); }
+  @keyframes pulse { 0%,100%{opacity:.4} 50%{opacity:1} }
+
+  main { display:grid; grid-template-columns:1fr 360px; overflow:hidden; }
+  .left { display:grid; grid-template-rows:1fr 38%; overflow:hidden; }
+
+  .pane { position:relative; overflow:hidden; background:#04101c; border-right:1px solid var(--line); }
+  .pane > .cz { position:absolute; inset:0; }
+  .pane .cz .cesium-widget-credits { color:#d7e3ee !important; font-size:10px; }
+  .pane .tag { position:absolute; left:12px; top:10px; z-index:5; font-family:var(--mono); font-size:10px;
+    letter-spacing:0.22em; text-transform:uppercase; color:var(--ink-dim); background:rgba(10,15,24,0.6);
+    border:1px solid var(--line); padding:4px 8px; pointer-events:none; }
+  .pane .tag b { color:var(--ink); }
+
+  /* passage playback bar */
+  .scrubbar { position:absolute; left:14px; right:14px; bottom:14px; z-index:6; display:flex; align-items:center; gap:12px;
+    background:rgba(10,15,24,0.78); border:1px solid var(--line-bright); padding:8px 12px; backdrop-filter:blur(6px); }
+  .scrubbar .sbtn { background:transparent; border:1px solid var(--line-bright); color:var(--ink-dim); font-family:var(--mono);
+    font-size:11px; padding:5px 11px; cursor:pointer; letter-spacing:0.08em; }
+  .scrubbar .sbtn:hover { color:var(--ink); }
+  .scrubbar .sbtn.active { color:var(--cool); border-color:var(--cool); }
+  .scrubbar input[type=range] { flex:1; height:2px; -webkit-appearance:none; appearance:none; background:var(--ink-faint); outline:none; }
+  .scrubbar input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:13px; height:13px; border-radius:50%; background:var(--mean); cursor:pointer; border:2px solid var(--bg); }
+  .scrubbar .t { font-family:var(--mono); font-size:10.5px; color:var(--ink-dim); white-space:nowrap; }
+  .scrubbar .t b { color:var(--envelope); }
+
+  .harbors { display:grid; grid-template-columns:1fr 1fr; border-top:1px solid var(--line); overflow:hidden; }
+  .harbors .pane:last-child { border-right:none; }
+  /* Attribution stays on the main passage view (ToS); the two small insets show
+     the same imagery, so their duplicate credit strips are hidden. */
+  .harbors .cesium-widget-credits { display:none !important; }
+  .pane .tag.wx { top:auto; bottom:10px; color:var(--cool); }
+  .pane .tag.wx b { color:var(--cool); }
+
+  .info-pane { background:var(--bg-2); border-left:1px solid var(--line); padding:18px 20px; overflow-y:auto;
+    display:flex; flex-direction:column; gap:20px; }
+  .info-pane h2 { margin:0 0 10px; font-family:var(--serif); font-size:20px; }
+  .info-pane h2 em { color:var(--envelope); font-style:italic; }
+  .section-label { font-family:var(--mono); font-size:9px; letter-spacing:0.3em; color:var(--ink-faint); text-transform:uppercase; margin:0 0 8px; }
+
+  .statrow { display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; font-family:var(--mono); font-size:10px; }
+  .statrow .s .l { color:var(--ink-faint); font-size:8px; letter-spacing:0.12em; text-transform:uppercase; }
+  .statrow .s .v { color:var(--ink); font-size:12px; margin-top:2px; }
+
+  .boat-list { display:flex; flex-direction:column; gap:1px; }
+  .boat-btn { text-align:left; padding:8px 10px; background:transparent; border:1px solid var(--line-bright);
+    color:var(--ink-dim); cursor:pointer; font-family:var(--mono); font-size:11px; display:flex; flex-direction:column; gap:2px; }
+  .boat-btn:hover { background:rgba(155,168,189,0.06); color:var(--ink); }
+  .boat-btn.active { border-color:var(--envelope); color:var(--envelope); background:rgba(249,168,38,0.08); }
+  .boat-btn .meta { font-size:9px; letter-spacing:0.15em; opacity:0.65; text-transform:uppercase; }
+
+  .dep-control .top { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:4px; }
+  .dep-control .val { font-family:var(--mono); font-size:20px; color:var(--envelope); }
+  .dep-control .val .unit { font-size:10px; color:var(--ink-faint); margin-left:3px; }
+  .dep-control .clock { font-family:var(--mono); font-size:10px; color:var(--ink-faint); letter-spacing:0.1em; }
+  .dep-control input[type=range] { width:100%; height:2px; -webkit-appearance:none; appearance:none; background:var(--ink-faint); outline:none; margin:10px 0 6px; }
+  .dep-control input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:14px; height:14px; border-radius:50%; background:var(--envelope); cursor:pointer; border:2px solid var(--bg-2); }
+  .dep-control .scale { display:flex; justify-content:space-between; font-family:var(--mono); font-size:9px; color:var(--ink-faint); }
+  .recomputing { opacity:0.5; pointer-events:none; }
+
+  .toggle-btn { width:100%; display:flex; align-items:center; gap:10px; padding:9px 11px; background:transparent;
+    border:1px solid var(--line-bright); color:var(--ink-dim); cursor:pointer; font-family:var(--mono); font-size:11px; text-align:left; }
+  .toggle-btn .dot { width:8px; height:8px; border-radius:50%; background:var(--ink-faint); flex-shrink:0; }
+  .toggle-btn.active { border-color:var(--cool); color:var(--ink); background:rgba(78,205,196,0.06); }
+  .toggle-btn.active .dot { background:var(--cool); box-shadow:0 0 8px var(--cool); }
+  .toggle-btn .label { flex:1; } .toggle-btn .meta { font-size:9px; color:var(--ink-faint); text-transform:uppercase; }
+
+  .eta-chart { width:100%; height:110px; }
+  .eta-stats { display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; margin-top:8px; }
+  .eta-stats .stat { border-left:2px solid var(--ink-fade); padding-left:8px; }
+  .eta-stats .stat.p5{border-color:var(--cool)} .eta-stats .stat.p50{border-color:var(--mean)} .eta-stats .stat.p95{border-color:var(--hot)}
+  .eta-stats .stat .label { font-family:var(--mono); font-size:9px; color:var(--ink-faint); text-transform:uppercase; }
+  .eta-stats .stat .v { font-family:var(--mono); font-size:13px; color:var(--ink); margin-top:2px; }
+  .eta-stats .stat .d { font-family:var(--mono); font-size:10px; color:var(--ink-dim); margin-top:2px; }
+
+  .risk-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px 12px; }
+  .risk { border:1px solid var(--line); padding:9px 11px; background:rgba(10,15,24,0.5); }
+  .risk .label { font-family:var(--mono); font-size:9px; color:var(--ink-faint); text-transform:uppercase; }
+  .risk .v { font-family:var(--mono); font-size:17px; color:var(--ink); margin-top:4px; }
+  .risk .v.hot{color:var(--hot)} .risk .v.warn{color:var(--warn)} .risk .v.ok{color:var(--cool)}
+  .risk .x { font-family:var(--mono); font-size:9px; color:var(--ink-faint); margin-top:4px; }
+
+  .loader { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; flex-direction:column;
+    background:rgba(10,15,24,0.95); z-index:20; backdrop-filter:blur(8px); }
+  .loader.hidden { display:none; }
+  .loader .ring { width:36px; height:36px; border:1px solid var(--ink-fade); border-top-color:var(--envelope); border-radius:50%; animation:spin 1.2s linear infinite; margin-bottom:18px; }
+  @keyframes spin { to{transform:rotate(360deg)} }
+  .loader .text { font-family:var(--serif); font-size:20px; margin-bottom:6px; }
+  .loader .sub { font-family:var(--mono); font-size:11px; color:var(--ink-faint); letter-spacing:0.12em; text-transform:uppercase; max-width:380px; text-align:center; line-height:1.5; }
+  .loader .progress { margin-top:16px; width:240px; height:2px; background:var(--ink-fade); overflow:hidden; }
+  .loader .progress .bar { height:100%; background:var(--envelope); width:0; transition:width .3s; }
+  .loader .err-detail { margin-top:18px; padding:12px 16px; border:1px solid var(--hot); color:var(--hot); font-family:var(--mono); font-size:11px; max-width:560px; line-height:1.5; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <div class="brand">
+      <div style="display:flex;flex-direction:column;gap:2px;line-height:1;">
+        <div class="title">MERIDIAN</div>
+        <div class="subtitle"><span><span class="deep">DEEP</span><span class="blue">BLUE</span></span><span class="dyn">DYNAMICS</span></div>
+      </div>
+      <div class="route">
+        <div class="rbox dep click" id="depBox" title="Click to change departure port"><span class="rlabel">DEP ▾</span><span class="rplace" id="depPlace">Newport, RI</span><span class="rcoord" id="depCoord">41.49°N · 71.32°W</span></div>
+        <div class="rarrow">→</div>
+        <div class="rbox arr click" id="arrBox" title="Click to change arrival port"><span class="rlabel">ARR ▾</span><span class="rplace" id="arrPlace">St. George's, Bermuda</span><span class="rcoord" id="arrCoord">32.38°N · 64.68°W</span></div>
+        <div class="rdist"><span class="rlabel">DIST</span><span class="rplace" id="distLabel">635 nm</span></div>
+        <div class="rdist wx"><span class="rlabel">WIND</span><span class="rplace" id="windNow">—</span><span class="rsub">at boat · live</span></div>
+        <div class="rdist gust"><span class="rlabel">GUST</span><span class="rplace" id="gustNow">—</span><span class="rsub">at boat · live</span></div>
+      </div>
+    </div>
+    <div class="stamp">
+      <a class="nv" href="setup.html">⚙ Setup</a>
+      <a class="nv active" href="routing.html">🌊 Routing</a>
+      <a class="nv" href="index.html">🌐 Harbor</a>
+      <span class="live" id="liveStamp">Fetching live</span>
+    </div>
+  </header>
+
+  <div class="port-search" id="portSearch" style="display:none">
+    <input id="portInput" placeholder="Search port / town…" autocomplete="off" />
+    <div class="res" id="portResults"></div>
+    <div class="hint" id="portHint">Type ≥ 2 letters · Open-Meteo geocoding · Esc to close</div>
+  </div>
+
+  <main>
+    <div class="left">
+      <div class="pane">
+        <div id="mainView" class="cz"></div>
+        <div class="tag"><b>Passage</b> · isochrone ensemble on Google 3D Tiles</div>
+        <div class="scrubbar" id="scrubbar" style="display:none">
+          <button class="sbtn" id="playBtn" title="Play / pause passage">▶</button>
+          <input id="scrub" type="range" min="0" max="120" step="1" value="0" />
+          <div class="t" id="scrubLabel">T+0h</div>
+          <button class="sbtn active" id="windBtn" title="Toggle live wind field">WIND</button>
+        </div>
+        <div class="loader" id="loader">
+          <div class="ring"></div>
+          <div class="text" id="loaderText">Fetching live ensemble forecast</div>
+          <div class="sub" id="loaderSub">Open-Meteo · 6 wind points · ensemble members · hourly</div>
+          <div class="progress"><div class="bar" id="loaderBar"></div></div>
+        </div>
+      </div>
+      <div class="harbors">
+        <div class="pane" id="depPane"><div id="depView" class="cz"></div><div class="tag" id="depTag"><b>DEP</b> · Newport, RI</div><div class="tag wx" id="depWind"><b>WIND</b> —</div></div>
+        <div class="pane" id="arrPane"><div id="arrView" class="cz"></div><div class="tag" id="arrTag"><b>ARR</b> · St. George's, BM</div><div class="tag wx" id="arrWind"><b>WIND</b> —</div></div>
+      </div>
+    </div>
+
+    <aside class="info-pane">
+      <div>
+        <h2>Isochrone <em>Routing</em></h2>
+        <p class="section-label">Real wind · real polar · optimal routes · Google 3D</p>
+      </div>
+
+      <div class="statrow">
+        <div class="s"><div class="l">Forecast</div><div class="v" id="forecastIssue">—</div></div>
+        <div class="s"><div class="l">Arrived</div><div class="v" id="arrivedCount">—</div></div>
+        <div class="s"><div class="l">Spread @50%</div><div class="v" id="spreadMid">—</div></div>
+      </div>
+
+      <div>
+        <p class="section-label">Vessel</p>
+        <div class="boat-list" id="boatList"></div>
+      </div>
+
+      <div class="dep-control">
+        <p class="section-label">Departure offset</p>
+        <div class="top"><span class="val" id="depVal">+0<span class="unit">h</span></span><span class="clock" id="depClock">—</span></div>
+        <input id="depSlider" type="range" min="0" max="120" step="3" value="0" />
+        <div class="scale"><span>now</span><span>+48h</span><span>+120h</span></div>
+      </div>
+
+      <div>
+        <p class="section-label">Ocean currents</p>
+        <button id="currentsToggle" class="toggle-btn active">
+          <span class="dot"></span><span class="label">Currents <strong id="currentsState">ON</strong></span>
+          <span class="meta" id="currentsSource">MeteoFrance SMOC</span>
+        </button>
+      </div>
+
+      <div>
+        <p class="section-label">Arrival distribution</p>
+        <svg class="eta-chart" id="etaChart" viewBox="0 0 320 110" preserveAspectRatio="none"></svg>
+        <div class="eta-stats">
+          <div class="stat p5"><div class="label">P5 fast</div><div class="v" id="p5Val">—</div><div class="d" id="p5Delta">—</div></div>
+          <div class="stat p50"><div class="label">P50 median</div><div class="v" id="p50Val">—</div><div class="d" id="p50Delta">—</div></div>
+          <div class="stat p95"><div class="label">P95 slow</div><div class="v" id="p95Val">—</div><div class="d" id="p95Delta">—</div></div>
+        </div>
+      </div>
+
+      <div>
+        <p class="section-label">Risk metrics</p>
+        <div class="risk-grid">
+          <div class="risk"><div class="label">Max TWS</div><div class="v warn" id="maxTws">—</div><div class="x">95th pct ensemble</div></div>
+          <div class="risk"><div class="label">P(gale ≥28kt)</div><div class="v hot" id="pGale">—</div><div class="x">across members</div></div>
+          <div class="risk"><div class="label">Median TWS</div><div class="v" id="medTws">—</div><div class="x">over passage</div></div>
+          <div class="risk"><div class="label">P(≤4 days)</div><div class="v ok" id="pArrive">—</div><div class="x">fast arrival</div></div>
+          <div class="risk"><div class="label">Max favorable curr</div><div class="v ok" id="maxFav">—</div><div class="x">Gulf Stream help</div></div>
+          <div class="risk"><div class="label">Max adverse curr</div><div class="v hot" id="maxAdv">—</div><div class="x">current hindrance</div></div>
+        </div>
+      </div>
+    </aside>
+  </main>
+</div>
+
+<script src="lib/telemetry.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/cesium/1.124.0/Cesium.js"></script>
+<script src="lib/vessel.js"></script>
+<script src="lib/router.js"></script>
+<script>
+// ════════════════════ Cesium views (all on Google 3D Tiles) ════════════════════
+const rootUrl = window.meridian?.tiles?.rootUrl || "/api/3dtiles/v1/3dtiles/root.json";
+Cesium.Ion.defaultAccessToken = "";
+// Keep Cesium's default request scheduling — overriding it starved/flooded the
+// tilesets. Instead we serialize the tile loads (one tileset streams at a time).
+
+function makeViewer(id, isStatic) {
+  const v = new Cesium.Viewer(id, {
+    baseLayer:false, baseLayerPicker:false, geocoder:false, homeButton:false, sceneModePicker:false,
+    navigationHelpButton:false, animation:false, timeline:false, fullscreenButton:false, infoBox:false,
+    selectionIndicator:false, skyAtmosphere:new Cesium.SkyAtmosphere(),
+    terrainProvider:new Cesium.EllipsoidTerrainProvider(), requestRenderMode: !!isStatic,
+    contextOptions:{ webgl:{ preserveDrawingBuffer:true } }, // lets the screenshot fallback read the canvas
+  });
+  v.scene.globe.baseColor = Cesium.Color.fromCssColorString("#0a0f18");
+  v.scene.globe.showGroundAtmosphere = false;
+  v.scene.fog.enabled = false;
+  // Google's sea surface sits ~30 m BELOW the ellipsoid here (geoid offset), so
+  // up close the opaque dark ellipsoid pokes through in front of the tiles as a
+  // black sheet. Far out we still want it as the earth backdrop — toggle on
+  // camera height.
+  v.scene.preRender.addEventListener(() => {
+    const h = v.camera.positionCartographic && v.camera.positionCartographic.height;
+    if (h != null) v.scene.globe.show = h > 80000;
+  });
+  v.scene.renderError.addEventListener((scene, err) => {
+    if (window.Telemetry) window.Telemetry.send("cesium-renderError", {
+      view: id, message: String((err && err.message) || err), stack: err && err.stack });
+  });
+  return v;
+}
+async function loadTiles(v, label) {
+  // No probe (it doubled root.json sessions). Retry on transient failures.
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const t = await Cesium.Cesium3DTileset.fromUrl(rootUrl, { showCreditsOnScreen:true });
+      t.maximumScreenSpaceError = 16; // lighter: 3 viewers share the GPU
+      v.scene.primitives.add(t);
+      v.scene.requestRender();
+      console.log("[routing] tiles loaded:", label);
+      return t;
+    } catch (e) {
+      console.warn("[routing] tiles attempt", attempt, label, e && e.message);
+      await new Promise(r => setTimeout(r, 800));
+    }
+  }
+  console.error("[routing] tiles FAILED:", label);
+  return null;
+}
+
+// Continuous render on all three — requestRenderMode:true stopped the harbor
+// views from streaming Google tiles (no render → no tile requests → blank).
+const mainViewer = makeViewer("mainView", false);
+const depViewer  = makeViewer("depView", false);
+const arrViewer  = makeViewer("arrView", false);
+
+// ════════════════════ route endpoints (editable, persisted) ════════════════════
+const DEFAULT_ROUTE = {
+  dep:{ name:"Newport, RI", lat:41.4945, lon:-71.3173 },
+  arr:{ name:"St. George's, BM", lat:32.3833, lon:-64.6750 },
+};
+function loadRoute(){
+  try{ const s=localStorage.getItem('meridian.route'); if(s){ const r=JSON.parse(s);
+    if(r&&r.dep&&r.arr&&Number.isFinite(r.dep.lat)&&Number.isFinite(r.arr.lat)) return r; } }catch(e){}
+  return JSON.parse(JSON.stringify(DEFAULT_ROUTE));
+}
+let ROUTE=loadRoute();
+let START=ROUTE.dep, DEST=ROUTE.arr;
+// Forecast sample points: evenly spaced along the current leg (the router
+// IDW-interpolates between them, so they must track the route endpoints).
+function computeSamples(){ const n=6,out=[];
+  for(let i=0;i<n;i++){ const f=i/(n-1);
+    out.push({ lat:+(START.lat+(DEST.lat-START.lat)*f).toFixed(2), lon:+(START.lon+(DEST.lon-START.lon)*f).toFixed(2) }); }
+  return out; }
+let WIND_SAMPLES=computeSamples();
+const MAX_HOURS=240, ARRIVAL_TOL_NM=5;
+
+// Active vessel = whatever was chosen in the Setup view (shared store).
+const VESSEL = (window.Vessel ? window.Vessel.get() : null);
+let depOffsetHours=0, useCurrents=true, marineResults=null;
+
+const { gcDistance, bearing, sphereWalk, circDiff } = window.Router;
+
+// ════════════════════ live data fetch (Open-Meteo, no key) ════════════════════
+const ENSEMBLE_MODELS=[{slug:'ecmwf_ifs025',name:'ECMWF IFS 0.25° Ensemble',members:51,days:15},{slug:'gfs025',name:'GFS Ensemble 0.25°',members:31,days:10}];
+let activeModel=null;
+async function fetchEnsembleWind(sample){ const modelsToTry=activeModel?[activeModel]:ENSEMBLE_MODELS; let lastErr=null;
+  for(const m of modelsToTry){ const url=`https://ensemble-api.open-meteo.com/v1/ensemble?latitude=${sample.lat}&longitude=${sample.lon}&hourly=wind_speed_10m,wind_direction_10m&wind_speed_unit=kn&models=${m.slug}&forecast_days=${m.days}`;
+    try{ const r=await fetch(url); if(!r.ok){ lastErr=new Error(`HTTP ${r.status} from ${m.name}: ${(await r.text()).slice(0,200)}`); continue; } const data=await r.json(); if(data.error){ lastErr=new Error(`${m.name}: ${data.reason||''}`); continue; } if(!activeModel)activeModel=m; return data; }catch(e){ lastErr=e; } }
+  throw lastErr||new Error('All ensemble models failed'); }
+async function fetchAllWinds(){ const bar=document.getElementById('loaderBar'),sub=document.getElementById('loaderSub'),results=[];
+  for(let i=0;i<WIND_SAMPLES.length;i++){ sub.textContent=`Wind · sample ${i+1}/${WIND_SAMPLES.length}`; results.push({sample:WIND_SAMPLES[i],data:await fetchEnsembleWind(WIND_SAMPLES[i])}); bar.style.width=((i+1)/WIND_SAMPLES.length*40)+'%'; } return results; }
+async function fetchMarineCurrents(sample){ const url=`https://marine-api.open-meteo.com/v1/marine?latitude=${sample.lat}&longitude=${sample.lon}&hourly=ocean_current_velocity,ocean_current_direction&forecast_days=8&cell_selection=sea`;
+  const r=await fetch(url); if(!r.ok)throw new Error(`Marine HTTP ${r.status}`); const data=await r.json(); if(data.error)throw new Error(`Marine: ${data.reason||''}`); return data; }
+async function fetchAllCurrents(){ const bar=document.getElementById('loaderBar'),sub=document.getElementById('loaderSub'),results=[];
+  for(let i=0;i<WIND_SAMPLES.length;i++){ sub.textContent=`Currents · sample ${i+1}/${WIND_SAMPLES.length}`; try{ results.push({sample:WIND_SAMPLES[i],data:await fetchMarineCurrents(WIND_SAMPLES[i])}); }catch(err){ results.push({sample:WIND_SAMPLES[i],data:null,error:err.message}); } bar.style.width=(40+(i+1)/WIND_SAMPLES.length*30)+'%'; } return results; }
+
+// Deterministic wind grid over the corridor (one multi-point call) — drives the
+// wind-field arrow layer; visualization only, the router uses the ensemble.
+function gridAxes(){
+  const la0=Math.min(START.lat,DEST.lat)-0.6, la1=Math.max(START.lat,DEST.lat)+0.6;
+  const lo0=Math.min(START.lon,DEST.lon)-0.9, lo1=Math.max(START.lon,DEST.lon)+0.9;
+  const glats=[],glons=[];
+  for(let i=0;i<7;i++)glats.push(+(la0+(la1-la0)*i/6).toFixed(2));
+  for(let j=0;j<6;j++)glons.push(+(lo0+(lo1-lo0)*j/5).toFixed(2));
+  return {glats,glons};
+}
+async function fetchWindGrid(){
+  const {glats,glons}=gridAxes();
+  const lats=[],lons=[];
+  for(const la of glats) for(const lo of glons){ lats.push(la); lons.push(lo); }
+  const url=`https://api.open-meteo.com/v1/forecast?latitude=${lats.join(',')}&longitude=${lons.join(',')}&hourly=wind_speed_10m,wind_direction_10m,wind_gusts_10m&wind_speed_unit=kn&forecast_days=10`;
+  const r=await fetch(url); if(!r.ok)throw new Error(`Grid HTTP ${r.status}`);
+  let data=await r.json(); if(!Array.isArray(data))data=[data];
+  return data.map((d,i)=>({lat:lats[i],lon:lons[i],time0:new Date(d.hourly.time[0]+'Z'),speeds:d.hourly.wind_speed_10m,dirs:d.hourly.wind_direction_10m,gusts:d.hourly.wind_gusts_10m}));
+}
+
+// ════════════════════ envelope across the fleet ════════════════════
+function computeEnvelope(routes){ const N=50,envelope=[];
+  // Paths can contain zero-length "parked" legs (becalmed / fan stalled) — a
+  // naive (td-cum)/seg there is 0/0 → NaN → Cesium's polygon worker throws
+  // ("normalized result is not a number"). Skip degenerate segments + sanitize.
+  const usable=routes.filter(r=>r.path.length>=2);
+  if(!usable.length)return [];
+  for(let s=0;s<=N;s++){ const tp=s/N,lats=[],lons=[];
+    for(const r of usable){ const total=r.path.reduce((a,p,i)=>i===0?0:a+gcDistance(r.path[i-1],p),0); let cum=0,pt=null,td=tp*total;
+      if(total>0){
+        for(let i=1;i<r.path.length;i++){ const seg=gcDistance(r.path[i-1],r.path[i]); if(seg<=0)continue;
+          if(cum+seg>=td){ const f=(td-cum)/seg; pt={lat:r.path[i-1].lat+(r.path[i].lat-r.path[i-1].lat)*f,lon:r.path[i-1].lon+(r.path[i].lon-r.path[i-1].lon)*f}; break; } cum+=seg; }
+      }
+      if(!pt)pt=r.path[r.path.length-1];
+      if(Number.isFinite(pt.lat)&&Number.isFinite(pt.lon)){ lats.push(pt.lat); lons.push(pt.lon); } }
+    if(!lats.length)continue;
+    lats.sort((a,b)=>a-b); lons.sort((a,b)=>a-b);
+    envelope.push({progress:tp,lat5:lats[Math.floor(.05*lats.length)],lat50:lats[Math.floor(.5*lats.length)],lat95:lats[Math.floor(.95*lats.length)],lon50:lons[Math.floor(.5*lons.length)]}); }
+  return envelope; }
+
+// Pathology guard for display/stats: a member whose track is wildly longer than
+// the great circle (or that wandered without getting anywhere) is pruned from
+// the picture and counted, not silently blended into the envelope.
+function markOutliers(routes){
+  const gc=gcDistance(START,DEST);
+  for(const r of routes){
+    let len=0; for(let i=1;i<r.path.length;i++)len+=gcDistance(r.path[i-1],r.path[i]);
+    r.pathLen=len;
+    r.outlier = r.path.length>1 && (len>1.75*gc || (!r.arrived && r.finalDistance>0.6*gc));
+  }
+  return routes.filter(r=>!r.outlier);
+}
+
+// ════════════════════ Cesium route rendering ════════════════════
+let routeEntities=[];
+function clearRoutes(){ routeEntities.forEach(e=>mainViewer.entities.remove(e)); routeEntities=[]; }
+function colorA(hex,a){ return Cesium.Color.fromCssColorString(hex).withAlpha(a); }
+function mix3(c1,c2,t){ return [c1[0]+(c2[0]-c1[0])*t, c1[1]+(c2[1]-c1[1])*t, c1[2]+(c2[2]-c1[2])*t]; }
+// Member color by arrival percentile: fast=teal → median=blue → slow=red.
+function buildEtaColor(routes){
+  const etas=routes.filter(r=>r.arrived).map(r=>r.etaHours).sort((a,b)=>a-b);
+  const C1=[78,205,196],C2=[107,157,217],C3=[233,69,96];
+  return (r,alpha)=>{
+    if(!r.arrived) return colorA('#54627c',Math.min(alpha,0.3));
+    const i=etas.indexOf(r.etaHours), f=etas.length>1?i/(etas.length-1):0.5;
+    const c=f<0.5?mix3(C1,C2,f*2):mix3(C2,C3,(f-0.5)*2);
+    return new Cesium.Color(c[0]/255,c[1]/255,c[2]/255,alpha);
+  };
+}
+function medianRoute(routes){
+  const arrived=routes.filter(r=>r.arrived).sort((a,b)=>a.etaHours-b.etaHours);
+  if(arrived.length) return arrived[Math.floor(arrived.length/2)];
+  return routes.slice().sort((a,b)=>a.finalDistance-b.finalDistance)[0]||null;
+}
+function renderRoutes3D(routes,envelope){
+  clearRoutes();
+  const etaColor=buildEtaColor(routes);
+  // depthFailMaterial → routes stay visible even where Google tiles would occlude them.
+  for(const r of routes){ const flat=[]; for(const p of r.path){ flat.push(p.lon,p.lat); } if(flat.length<4)continue;
+    const col=etaColor(r,0.55);
+    routeEntities.push(mainViewer.entities.add({ polyline:{ positions:Cesium.Cartesian3.fromDegreesArray(flat), width:2, material:col, depthFailMaterial:col, arcType:Cesium.ArcType.GEODESIC } })); }
+  // Envelope as dashed 5%/95% boundary lines — the old filled polygon bowtied
+  // (self-intersected) whenever the corridor bent, which read as broken shading,
+  // and a single NaN vertex killed the whole render loop.
+  const e5=[],e95=[];
+  for(const e of envelope){ if([e.lon50,e.lat5,e.lat95].every(Number.isFinite)){ e5.push(e.lon50,e.lat5); e95.push(e.lon50,e.lat95); } }
+  const dash=new Cesium.PolylineDashMaterialProperty({ color:colorA("#f9a826",0.85), dashLength:14 });
+  for(const band of [e5,e95]){ if(band.length>=4)
+    routeEntities.push(mainViewer.entities.add({ polyline:{ positions:Cesium.Cartesian3.fromDegreesArray(band), width:1.6, material:dash, depthFailMaterial:colorA("#f9a826",0.4), arcType:Cesium.ArcType.GEODESIC } })); }
+  const med=[]; for(const e of envelope){ if(Number.isFinite(e.lon50)&&Number.isFinite(e.lat50))med.push(e.lon50,e.lat50); }
+  if(med.length>=4){
+    // glow + core for the median so it reads at corridor scale
+    routeEntities.push(mainViewer.entities.add({ polyline:{ positions:Cesium.Cartesian3.fromDegreesArray(med), width:9, material:colorA("#f4f7fc",0.35), depthFailMaterial:colorA("#f4f7fc",0.3), arcType:Cesium.ArcType.GEODESIC } }));
+    routeEntities.push(mainViewer.entities.add({ polyline:{ positions:Cesium.Cartesian3.fromDegreesArray(med), width:3, material:colorA("#ffffff",1.0), depthFailMaterial:colorA("#ffffff",0.9), arcType:Cesium.ArcType.GEODESIC } }));
+  }
+  // 24h time ticks along the median-ETA member's optimal route
+  const mr=medianRoute(routes);
+  if(mr&&mr.path.length>2){ const end=mr.path[mr.path.length-1].time;
+    for(let h=24;h<end;h+=24){ const p=posAt(mr.path,h);
+      routeEntities.push(mainViewer.entities.add({ position:Cesium.Cartesian3.fromDegrees(p.lon,p.lat,0),
+        point:{pixelSize:5,color:colorA("#f4f7fc",0.95),outlineColor:colorA("#0a0f18",0.9),outlineWidth:1,disableDepthTestDistance:Number.POSITIVE_INFINITY},
+        label:{text:(h/24)+'d',font:"10px Fira Code, monospace",fillColor:colorA("#9ba8bd",0.95),pixelOffset:new Cesium.Cartesian2(8,-6),disableDepthTestDistance:Number.POSITIVE_INFINITY} })); } }
+  const mk=(p,hex,txt)=>mainViewer.entities.add({ position:Cesium.Cartesian3.fromDegrees(p.lon,p.lat,0),
+    point:{pixelSize:9,color:Cesium.Color.fromCssColorString(hex),outlineColor:Cesium.Color.WHITE,outlineWidth:1,disableDepthTestDistance:Number.POSITIVE_INFINITY},
+    label:{text:txt,font:"11px Fira Code, monospace",fillColor:Cesium.Color.fromCssColorString(hex),pixelOffset:new Cesium.Cartesian2(10,-8),disableDepthTestDistance:Number.POSITIVE_INFINITY} });
+  const shortName=(p)=>String(p.name||'').split(',')[0].toUpperCase()||'PORT';
+  routeEntities.push(mk(START,"#4ecdc4",shortName(START)+" · DEP")); routeEntities.push(mk(DEST,"#e94560",shortName(DEST)+" · ARR"));
+}
+
+// ════════════════════ passage playback (time scrubber) ════════════════════
+// posAt: linear interpolation along a route path; also reports segment SOG/TWS.
+function posAt(path,t){
+  if(!path.length)return {lat:START.lat,lon:START.lon,sog:0,tws:0};
+  if(t<=path[0].time)return {lat:path[0].lat,lon:path[0].lon,sog:0,tws:path[0].tws||0};
+  for(let i=1;i<path.length;i++){
+    if(path[i].time>=t){ const a=path[i-1],b=path[i],dt=b.time-a.time||1,f=(t-a.time)/dt;
+      return { lat:a.lat+(b.lat-a.lat)*f, lon:a.lon+(b.lon-a.lon)*f, sog:gcDistance(a,b)/dt, tws:b.tws||0 }; } }
+  const last=path[path.length-1];
+  return {lat:last.lat,lon:last.lon,sog:0,tws:last.tws||0,done:true};
+}
+
+let scrubH=0,maxScrubH=120,playing=false,lastFrameTs=null;
+let fleetPC=null,fleetMeta=[],medianPC=null,medianLabelC=null,scrubRoutes=null;
+const PLAY_RATE_HPS=14; // forecast hours per real second while playing
+
+function buildScrubber(routes){
+  scrubRoutes=routes;
+  maxScrubH=Math.max(24,Math.ceil(Math.max(...routes.map(r=>r.path.length?r.path[r.path.length-1].time:0))));
+  const slider=document.getElementById('scrub');
+  slider.max=maxScrubH; if(scrubH>maxScrubH)scrubH=0; slider.value=Math.round(scrubH);
+  if(fleetPC){ mainViewer.scene.primitives.remove(fleetPC); fleetPC=null; }
+  if(medianLabelC){ mainViewer.scene.primitives.remove(medianLabelC); medianLabelC=null; }
+  fleetPC=mainViewer.scene.primitives.add(new Cesium.PointPrimitiveCollection());
+  medianLabelC=mainViewer.scene.primitives.add(new Cesium.LabelCollection());
+  const etaColor=buildEtaColor(routes);
+  fleetMeta=[];
+  for(const r of routes){
+    const pp=fleetPC.add({ position:Cesium.Cartesian3.fromDegrees(START.lon,START.lat,50), pixelSize:5,
+      color:etaColor(r,0.9), outlineColor:colorA('#0a0f18',0.8), outlineWidth:1,
+      disableDepthTestDistance:Number.POSITIVE_INFINITY });
+    fleetMeta.push({route:r,point:pp});
+  }
+  const mr=medianRoute(routes);
+  const medPt=fleetPC.add({ position:Cesium.Cartesian3.fromDegrees(START.lon,START.lat,50), pixelSize:9,
+    color:Cesium.Color.WHITE, outlineColor:colorA('#f9a826',1), outlineWidth:2,
+    disableDepthTestDistance:Number.POSITIVE_INFINITY });
+  const medLbl=medianLabelC.add({ position:Cesium.Cartesian3.fromDegrees(START.lon,START.lat,50),
+    text:'', font:'11px Fira Code, monospace', fillColor:colorA('#f4f7fc',1),
+    showBackground:true, backgroundColor:colorA('#0a0f18',0.7), pixelOffset:new Cesium.Cartesian2(12,-12),
+    disableDepthTestDistance:Number.POSITIVE_INFINITY });
+  fleetMeta.medianRoute=mr; fleetMeta.medianPoint=medPt; fleetMeta.medianLabel=medLbl;
+  document.getElementById('scrubbar').style.display='flex';
+  updateScrub();
+}
+
+function updateScrub(){
+  if(!scrubRoutes)return;
+  for(const {route,point} of fleetMeta){
+    const eta=route.arrived?route.etaHours:Infinity;
+    if(scrubH>=eta){ point.position=Cesium.Cartesian3.fromDegrees(DEST.lon,DEST.lat,50); point.color=point.color.withAlpha(0.25); }
+    else{ const p=posAt(route.path,scrubH); point.position=Cesium.Cartesian3.fromDegrees(p.lon,p.lat,50);
+      if(point.color.alpha<0.9)point.color=point.color.withAlpha(0.9); }
+  }
+  const mr=fleetMeta.medianRoute;
+  let medInfo='',medPos=null;
+  if(mr){
+    const done=mr.arrived&&scrubH>=mr.etaHours;
+    const p=done?{lat:DEST.lat,lon:DEST.lon,sog:0,tws:0}:posAt(mr.path,scrubH);
+    medPos=p;
+    fleetMeta.medianPoint.position=Cesium.Cartesian3.fromDegrees(p.lon,p.lat,50);
+    fleetMeta.medianLabel.position=Cesium.Cartesian3.fromDegrees(p.lon,p.lat,50);
+    const dtg=gcDistance(p,DEST);
+    fleetMeta.medianLabel.text=done?'MEDIAN · ARRIVED':`MEDIAN · ${p.sog.toFixed(1)} kt`;
+    medInfo=done?' · median arrived':` · median ${p.sog.toFixed(1)} kt · ${Math.round(dtg)} nm to go`;
+  }
+  updateWindReadouts(medPos);
+  const when=forecastIssueDate?hoursToETA(forecastIssueDate,scrubH+depOffsetHours):'—';
+  document.getElementById('scrubLabel').innerHTML=`<b>T+${Math.round(scrubH)}h</b> · ${when}${medInfo}`;
+  updateWindArrows();
+  updateEtaNowLine();
+}
+
+function setScrub(h,fromSlider){
+  scrubH=Math.max(0,Math.min(maxScrubH,h));
+  if(!fromSlider)document.getElementById('scrub').value=Math.round(scrubH);
+  updateScrub();
+}
+function playLoop(ts){
+  if(!playing)return;
+  if(lastFrameTs!=null){ let h=scrubH+(ts-lastFrameTs)/1000*PLAY_RATE_HPS; if(h>maxScrubH)h=0; setScrub(h); }
+  lastFrameTs=ts; requestAnimationFrame(playLoop);
+}
+function setPlaying(on){
+  playing=on; lastFrameTs=null;
+  document.getElementById('playBtn').textContent=on?'❚❚':'▶';
+  document.getElementById('playBtn').classList.toggle('active',on);
+  if(on)requestAnimationFrame(playLoop);
+}
+
+// ════════════════════ wind-field arrow layer ════════════════════
+let windGrid=null,windPLC=null,windShown=true,lastWindIdx=-1;
+function gridHourIdx(){
+  if(!windGrid||!forecastIssueDate)return 0;
+  const offH=(windGrid[0].time0-forecastIssueDate)/3600000;
+  return Math.max(0,Math.min(windGrid[0].speeds.length-1,Math.floor(scrubH+depOffsetHours-offH)));
+}
+// Nearest grid point's wind at the current scrub hour — drives the header
+// WIND/GUST boxes and the per-harbor readouts.
+function nearestGridWind(lat,lon){
+  if(!windGrid)return null;
+  const idx=gridHourIdx();
+  let best=null,bd=Infinity;
+  for(const g of windGrid){ const d=(g.lat-lat)**2+(g.lon-lon)**2; if(d<bd){bd=d;best=g;} }
+  if(!best)return null;
+  return { tws:best.speeds[idx], dir:best.dirs[idx], gust:best.gusts?best.gusts[idx]:null };
+}
+function fmtWind(w){ return w&&w.tws!=null?`${Math.round(w.tws)} kt · ${String(Math.round(w.dir)).padStart(3,'0')}°`:'—'; }
+function updateWindReadouts(boatPos){
+  const wb=boatPos?nearestGridWind(boatPos.lat,boatPos.lon):null;
+  document.getElementById('windNow').textContent=fmtWind(wb);
+  document.getElementById('gustNow').textContent=wb&&wb.gust!=null?`${Math.round(wb.gust)} kt`:'—';
+  document.getElementById('depWind').innerHTML=`<b>WIND</b> ${fmtWind(nearestGridWind(START.lat,START.lon))}`;
+  document.getElementById('arrWind').innerHTML=`<b>WIND</b> ${fmtWind(nearestGridWind(DEST.lat,DEST.lon))}`;
+}
+function windColor(tws){
+  if(tws<8)return colorA('#4a6f9e',0.85); if(tws<14)return colorA('#6b9dd9',0.9);
+  if(tws<20)return colorA('#4ecdc4',0.9); if(tws<28)return colorA('#f9a826',0.95);
+  return colorA('#e94560',1.0);
+}
+function buildWindLayer(grid){
+  windGrid=grid;
+  windPLC=mainViewer.scene.primitives.add(new Cesium.PolylineCollection());
+  for(const g of grid){
+    g.pl=windPLC.add({ positions:[Cesium.Cartesian3.fromDegrees(g.lon,g.lat,200),Cesium.Cartesian3.fromDegrees(g.lon,g.lat+0.1,200)],
+      width:7, material:Cesium.Material.fromType('PolylineArrow',{color:colorA('#6b9dd9',0.9)}) });
+  }
+  windPLC.show=windShown;
+  lastWindIdx=-1;
+  updateWindArrows(true);
+}
+function updateWindArrows(force){
+  if(!windGrid||!windPLC||!forecastIssueDate)return;
+  const offH=(windGrid[0].time0-forecastIssueDate)/3600000;
+  const idx=Math.max(0,Math.min(windGrid[0].speeds.length-1,Math.floor(scrubH+depOffsetHours-offH)));
+  if(idx===lastWindIdx&&!force)return;
+  lastWindIdx=idx;
+  for(const g of windGrid){
+    const tws=g.speeds[idx],dir=g.dirs[idx];
+    if(tws==null||dir==null){ g.pl.show=false; continue; }
+    g.pl.show=windShown;
+    const dirTo=(dir+180)%360, len=Math.min(42,7+tws*0.95);
+    const end=sphereWalk({lat:g.lat,lon:g.lon},dirTo,len);
+    g.pl.positions=[Cesium.Cartesian3.fromDegrees(g.lon,g.lat,200),Cesium.Cartesian3.fromDegrees(end.lon,end.lat,200)];
+    g.pl.material.uniforms.color=windColor(tws);
+    g.pl.width=6+Math.min(5,tws/6);
+  }
+}
+
+// ════════════════════ ETA histogram (SVG) ════════════════════
+const SVG_NS='http://www.w3.org/2000/svg';
+let etaAxis=null;
+function sel(tag,attrs={},parent=null){ const e=document.createElementNS(SVG_NS,tag); for(const k in attrs)e.setAttribute(k,attrs[k]); if(parent)parent.appendChild(e); return e; }
+function renderEtaChart(routes){ const svg=document.getElementById('etaChart'); svg.innerHTML=''; const W=320,H=110,pad=8; etaAxis=null;
+  const arrived=routes.filter(r=>r.arrived); if(!arrived.length){ sel('text',{x:W/2,y:H/2,'text-anchor':'middle',fill:'#9ba8bd','font-family':'var(--mono)','font-size':12},svg).textContent='No members arrived in window'; return {p5:null,p50:null,p95:null}; }
+  const etas=arrived.map(r=>r.etaHours).sort((a,b)=>a-b); const min=Math.floor(etas[0]-3),max=Math.ceil(etas[etas.length-1]+3),nBins=Math.min(16,arrived.length),bw=(max-min)/nBins,bins=new Array(nBins).fill(0);
+  for(const e of etas){ bins[Math.min(nBins-1,Math.floor((e-min)/bw))]++; } const maxBin=Math.max(...bins),barW=(W-2*pad)/nBins;
+  const p5=etas[Math.floor(.05*etas.length)],p50=etas[Math.floor(.5*etas.length)],p95=etas[Math.floor(.95*etas.length)];
+  bins.forEach((c,i)=>{ const x=pad+i*barW,h=(c/maxBin)*(H-20),bc=min+(i+.5)*bw; let fill='#6b9dd9'; if(bc<=p5)fill='#4ecdc4'; else if(bc>=p95)fill='#e94560'; else if(Math.abs(bc-p50)<bw)fill='#f4f7fc'; sel('rect',{x:x+.5,y:H-12-h,width:barW-1.5,height:h,fill,opacity:.85},svg); });
+  sel('line',{x1:pad,x2:W-pad,y1:H-12,y2:H-12,stroke:'#2a3548','stroke-width':.5},svg);
+  for(let f=0;f<=4;f++){ const x=pad+(f/4)*(W-2*pad),val=min+(f/4)*(max-min),days=Math.floor(val/24),hrs=Math.round(val-days*24); sel('text',{x,y:H-1,'text-anchor':'middle',fill:'#54627c','font-family':'var(--mono)','font-size':8},svg).textContent=`${days}d${hrs}h`; }
+  // "now" marker driven by the playback scrubber
+  const now=sel('line',{id:'etaNowLine',x1:pad,x2:pad,y1:6,y2:H-12,stroke:'#f9a826','stroke-width':1,'stroke-dasharray':'3 2',visibility:'hidden'},svg);
+  etaAxis={min,max,W,pad,el:now};
+  return {p5,p50,p95}; }
+function updateEtaNowLine(){
+  if(!etaAxis)return; const {min,max,W,pad,el}=etaAxis;
+  if(scrubH<min||scrubH>max){ el.setAttribute('visibility','hidden'); return; }
+  const x=pad+(scrubH-min)/(max-min)*(W-2*pad);
+  el.setAttribute('x1',x); el.setAttribute('x2',x); el.setAttribute('visibility','visible');
+}
+
+function hoursToETA(d0,add){ const d=new Date(d0.getTime()+add*3600*1000),m=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']; return `${m[d.getUTCMonth()]} ${d.getUTCDate()} ${String(d.getUTCHours()).padStart(2,'0')}:00Z`; }
+function fmtHours(h){ const d=Math.floor(h/24); return `${d}d ${Math.round(h-d*24)}h`; }
+
+// ════════════════════ panel update + reroute ════════════════════
+let currentWindResults=null,parsedMembers=null,forecastIssueDate=null,infoPane=null,lastRoutes=null;
+function updatePanel(routes,envelope,prunedCount){
+  const {p5,p50,p95}=renderEtaChart(routes); const arrived=routes.filter(r=>r.arrived);
+  document.getElementById('arrivedCount').textContent=`${arrived.length} / ${routes.length}`+(prunedCount?` · ${prunedCount}✂`:'');
+  const set=(id,v)=>document.getElementById(id).textContent=v;
+  if(p5!=null){ set('p5Val',hoursToETA(forecastIssueDate,p5+depOffsetHours)); set('p50Val',hoursToETA(forecastIssueDate,p50+depOffsetHours)); set('p95Val',hoursToETA(forecastIssueDate,p95+depOffsetHours)); set('p5Delta',fmtHours(p5)); set('p50Delta',fmtHours(p50)); set('p95Delta',fmtHours(p95)); }
+  const maxTws=Math.max(...routes.map(r=>r.maxTws)),avgTws=routes.reduce((s,r)=>s+r.avgTws,0)/Math.max(1,routes.length);
+  set('maxTws',maxTws.toFixed(0)+' kt'); set('medTws',avgTws.toFixed(0)+' kt');
+  set('pGale',(routes.filter(r=>r.maxTws>=28).length/routes.length*100).toFixed(0)+'%');
+  set('pArrive',(arrived.filter(r=>r.etaHours<=96).length/routes.length*100).toFixed(0)+'%');
+  const maxFav=Math.max(...routes.map(r=>r.maxFavorableCurrent||0)),maxAdv=Math.max(...routes.map(r=>r.maxAdverseCurrent||0));
+  set('maxFav',useCurrents?'+'+maxFav.toFixed(1)+' kt':'— off'); set('maxAdv',useCurrents?'−'+maxAdv.toFixed(1)+' kt':'— off');
+  const mid=envelope[Math.floor(envelope.length/2)]; set('spreadMid','±'+Math.round((mid.lat95-mid.lat5)*60/2)+' nm');
+  updateEtaNowLine();
+}
+function makeEnv(){
+  return { windResults:currentWindResults, currentResults:marineResults, useCurrents, depOffsetHours,
+    vessel:VESSEL, start:START, dest:DEST, maxHours:MAX_HOURS, arrivalTolNm:ARRIVAL_TOL_NM };
+}
+let rerouting=false,rerouteQueued=false;
+async function rerouteAndRender(){
+  if(!currentWindResults||!parsedMembers)return;
+  if(rerouting){ rerouteQueued=true; return; }
+  rerouting=true;
+  if(infoPane)infoPane.classList.add('recomputing');
+  const stamp=document.getElementById('liveStamp'),stampText=stamp.textContent;
+  const routes=await window.Router.routeFleet(parsedMembers,makeEnv(),(i,n)=>{ stamp.textContent=`Routing ${i}/${n}`; });
+  stamp.textContent=stampText;
+  lastRoutes=routes;
+  const kept=markOutliers(routes);
+  const envelope=computeEnvelope(kept);
+  renderRoutes3D(kept,envelope); updatePanel(kept,envelope,routes.length-kept.length); buildScrubber(kept);
+  if(infoPane)infoPane.classList.remove('recomputing');
+  rerouting=false;
+  if(rerouteQueued){ rerouteQueued=false; rerouteAndRender(); }
+}
+function renderBoatList(){ const list=document.getElementById('boatList'); list.innerHTML='';
+  // Read-only display of the active vessel; selection happens in the Setup view.
+  const card=document.createElement('div'); card.className='boat-btn active';
+  card.innerHTML=`<span class="name">${VESSEL.model||VESSEL.name||'—'}</span><span class="meta">${VESSEL.maker||VESSEL.type||''}${VESSEL.year&&VESSEL.year!=='—'?' · '+VESSEL.year:''}</span>`;
+  list.appendChild(card);
+  const link=document.createElement('a'); link.href='setup.html'; link.textContent='⚙ Change vessel in Setup →';
+  link.style.cssText='display:block;margin-top:6px;font-family:var(--mono);font-size:10px;letter-spacing:0.1em;color:var(--member);text-decoration:none;';
+  list.appendChild(link); }
+function updateDepClock(){ if(!forecastIssueDate)return; const d=new Date(forecastIssueDate.getTime()+depOffsetHours*3600*1000),m=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  document.getElementById('depClock').textContent=`${m[d.getUTCMonth()]} ${d.getUTCDate()} ${String(d.getUTCHours()).padStart(2,'0')}:00Z`;
+  document.getElementById('depVal').innerHTML=(depOffsetHours>=0?'+':'')+depOffsetHours+'<span class="unit">h</span>'; }
+
+// ════════════════════ route header / cameras ════════════════════
+function fmtCoord(p){ const ns=p.lat>=0?'N':'S', ew=p.lon>=0?'E':'W';
+  return `${Math.abs(p.lat).toFixed(2)}°${ns} · ${Math.abs(p.lon).toFixed(2)}°${ew}`; }
+function updateHeaderRoute(){
+  document.getElementById('depPlace').textContent=START.name; document.getElementById('depCoord').textContent=fmtCoord(START);
+  document.getElementById('arrPlace').textContent=DEST.name;  document.getElementById('arrCoord').textContent=fmtCoord(DEST);
+  document.getElementById('distLabel').textContent=Math.round(gcDistance(START,DEST))+' nm';
+  document.getElementById('depTag').innerHTML=`<b>DEP</b> · ${START.name}`;
+  document.getElementById('arrTag').innerHTML=`<b>ARR</b> · ${DEST.name}`;
+}
+function positionCameras(){
+  const mid={lat:(START.lat+DEST.lat)/2, lon:(START.lon+DEST.lon)/2};
+  const alt=Math.min(12e6,Math.max(150000,gcDistance(START,DEST)*1852*0.8));
+  mainViewer.camera.setView({ destination:Cesium.Cartesian3.fromDegrees(mid.lon,mid.lat,alt), orientation:{ heading:0, pitch:Cesium.Math.toRadians(-90), roll:0 } });
+  depViewer.camera.setView({ destination:Cesium.Cartesian3.fromDegrees(START.lon, START.lat-0.012, 1600), orientation:{ heading:0, pitch:Cesium.Math.toRadians(-28), roll:0 } });
+  arrViewer.camera.setView({ destination:Cesium.Cartesian3.fromDegrees(DEST.lon, DEST.lat-0.012, 1600), orientation:{ heading:0, pitch:Cesium.Math.toRadians(-28), roll:0 } });
+}
+
+// ════════════════════ live fetch + route (boot AND port changes) ════════════════════
+async function loadLiveAndRoute(){
+  const loader=document.getElementById('loader'),loaderText=document.getElementById('loaderText'),loaderSub=document.getElementById('loaderSub'),loaderBar=document.getElementById('loaderBar');
+  loader.classList.remove('hidden'); loaderBar.style.width='0%';
+  const errBox=loader.querySelector('.err-detail'); if(errBox)errBox.remove();
+  refreshWindGrid(); // visualization-only — parallel, fail soft
+  try{
+    // Retry the whole live fetch — single transient failures shouldn't kill it.
+    let windResults;
+    for(let attempt=1;;attempt++){
+      try{
+        loaderText.textContent = attempt>1 ? `Retrying live fetch (${attempt})…` : 'Fetching live ensemble forecast';
+        windResults=await fetchAllWinds();
+        loaderText.textContent='Fetching ocean currents';
+        marineResults=await fetchAllCurrents();
+        break;
+      }catch(e){ if(attempt>=3) throw e; await new Promise(r=>setTimeout(r,1500)); }
+    }
+    currentWindResults=windResults;
+    const currentsAvail=marineResults.filter(c=>c.data).length; useCurrents=currentsAvail>0;
+    const members=window.Router.parseMembers(windResults); parsedMembers=members;
+    forecastIssueDate=new Date(windResults[0].data.hourly.time[0]+'Z');
+    const MON=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const fd=forecastIssueDate;
+    document.getElementById('forecastIssue').textContent=`${fd.getUTCDate()} ${MON[fd.getUTCMonth()]} ${fd.getUTCFullYear()}`;
+    loaderText.textContent=`Isochrone routing · ${members.length} members`;
+    const routes=await window.Router.routeFleet(members,makeEnv(),(i,n)=>{ loaderSub.textContent=`Optimal route · member ${i}/${n}`; loaderBar.style.width=(70+i/n*30)+'%'; });
+    lastRoutes=routes;
+    const kept=markOutliers(routes);
+    const envelope=computeEnvelope(kept);
+    renderRoutes3D(kept,envelope); updatePanel(kept,envelope,routes.length-kept.length); buildScrubber(kept);
+    document.getElementById('liveStamp').className='live';
+    document.getElementById('liveStamp').textContent=`Live · ${fd.getUTCDate()} ${MON[fd.getUTCMonth()]} ${String(fd.getUTCHours()).padStart(2,'0')}Z`;
+    renderBoatList(); updateDepClock();
+    const cBtn=document.getElementById('currentsToggle'),cState=document.getElementById('currentsState'),cSrc=document.getElementById('currentsSource');
+    if(currentsAvail===0){ cBtn.classList.remove('active'); cBtn.disabled=true; cState.textContent='UNAVAIL'; cSrc.textContent='No data'; cBtn.onclick=null; }
+    else{ cBtn.disabled=false; cBtn.classList.toggle('active',useCurrents); cState.textContent=useCurrents?'ON':'OFF'; cSrc.textContent=`SMOC · ${currentsAvail}/${marineResults.length} pts`;
+      cBtn.onclick=()=>{ useCurrents=!useCurrents; cBtn.classList.toggle('active',useCurrents); cState.textContent=useCurrents?'ON':'OFF'; rerouteAndRender(); }; }
+    loader.classList.add('hidden');
+  }catch(err){ console.error(err); if(window.Telemetry)window.Telemetry.send('live-fetch-failed',{message:err.message,stack:err.stack});
+    loader.querySelector('.ring').style.display='none'; loaderText.textContent='Could not fetch live data'; loaderSub.textContent='';
+    const e=document.createElement('div'); e.className='err-detail'; e.innerHTML=`<strong>Error:</strong> ${err.message.replace(/</g,'&lt;')}`; loader.appendChild(e);
+    document.getElementById('liveStamp').className='err'; document.getElementById('liveStamp').textContent='Connection failed'; }
+}
+async function refreshWindGrid(){
+  const b=document.getElementById('windBtn');
+  try{
+    const g=await fetchWindGrid();
+    if(windPLC){ mainViewer.scene.primitives.remove(windPLC); windPLC=null; }
+    buildWindLayer(g);
+    b.disabled=false; b.textContent='WIND'; b.classList.toggle('active',windShown);
+    console.log('[routing] wind grid ready:',g.length,'pts');
+  }catch(e){ console.warn('[routing] wind grid unavailable:',e.message);
+    b.disabled=true; b.classList.remove('active'); b.textContent='WIND —'; }
+}
+
+// ════════════════════ DEP/ARR port search ════════════════════
+async function geocode(q){
+  const r=await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(q)}&count=20&language=en&format=json`);
+  if(!r.ok)throw new Error('geocoding HTTP '+r.status);
+  const d=await r.json();
+  return (d.results||[]).map(x=>({
+    name:`${x.name}${x.admin1?', '+x.admin1:''}`, country:x.country_code||'', countryFull:x.country||'',
+    lat:x.latitude, lon:x.longitude }));
+}
+// Primary: Nominatim (OSM) — true free-form search with global coverage
+// (Open-Meteo's geocoder is name-only and has gaps: no Bermuda at all).
+// Fallback: Open-Meteo geocoding if Nominatim is unreachable.
+async function searchPorts(q){
+  try{
+    const r=await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=8`);
+    if(!r.ok)throw new Error('nominatim HTTP '+r.status);
+    const d=await r.json();
+    if(d.length)return d.map(x=>{
+      const parts=String(x.display_name||'').split(',').map(s=>s.trim());
+      return { name:parts.slice(0,2).join(', '), country:parts[parts.length-1]||'',
+        lat:parseFloat(x.lat), lon:parseFloat(x.lon) };
+    });
+  }catch(e){ console.warn('[ports] nominatim failed, falling back:',e.message); }
+  return (await geocode(q)).slice(0,8);
+}
+let portWhich=null;
+function openPortSearch(which,anchorEl){
+  portWhich=which;
+  const ps=document.getElementById('portSearch'), input=document.getElementById('portInput');
+  const rect=anchorEl.getBoundingClientRect();
+  ps.style.left=Math.round(rect.left)+'px'; ps.style.top=Math.round(rect.bottom+6)+'px'; ps.style.display='block';
+  document.getElementById('portResults').innerHTML='';
+  input.value=''; input.placeholder=`Search ${which==='dep'?'departure':'arrival'} port…`; input.focus();
+  document.getElementById(which==='dep'?'depPane':'arrPane').classList.add('focus');
+}
+function closePortSearch(){
+  document.getElementById('portSearch').style.display='none';
+  document.getElementById('depPane').classList.remove('focus');
+  document.getElementById('arrPane').classList.remove('focus');
+  portWhich=null;
+}
+async function setPort(which,place){
+  ROUTE[which]={name:place.name,lat:place.lat,lon:place.lon};
+  try{ localStorage.setItem('meridian.route',JSON.stringify(ROUTE)); }catch(e){}
+  START=ROUTE.dep; DEST=ROUTE.arr;
+  WIND_SAMPLES=computeSamples();
+  closePortSearch();
+  setPlaying(false); scrubH=0;
+  updateHeaderRoute(); positionCameras();
+  await loadLiveAndRoute();
+}
+function bindPortSearch(){
+  document.getElementById('depBox').addEventListener('click',()=>openPortSearch('dep',document.getElementById('depBox')));
+  document.getElementById('arrBox').addEventListener('click',()=>openPortSearch('arr',document.getElementById('arrBox')));
+  const input=document.getElementById('portInput'), results=document.getElementById('portResults');
+  let deb=null;
+  input.addEventListener('input',()=>{
+    if(deb)clearTimeout(deb);
+    const q=input.value.trim();
+    if(q.length<2){ results.innerHTML=''; return; }
+    deb=setTimeout(async()=>{
+      try{
+        const places=await searchPorts(q);
+        results.innerHTML='';
+        if(!places.length){ results.innerHTML='<button disabled>No matches</button>'; return; }
+        for(const p of places){
+          const btn=document.createElement('button');
+          btn.innerHTML=`${p.name} <span class="co">${p.country} · ${fmtCoord(p)}</span>`;
+          btn.addEventListener('click',()=>setPort(portWhich,p));
+          results.appendChild(btn);
+        }
+      }catch(e){ results.innerHTML=`<button disabled>Search failed: ${e.message}</button>`; }
+    },300);
+  });
+  input.addEventListener('keydown',e=>{ if(e.key==='Escape')closePortSearch(); });
+  document.addEventListener('click',e=>{
+    const ps=document.getElementById('portSearch');
+    if(ps.style.display!=='none' && !ps.contains(e.target)
+      && !document.getElementById('depBox').contains(e.target)
+      && !document.getElementById('arrBox').contains(e.target)) closePortSearch();
+  });
+}
+
+// ════════════════════ bootstrap ════════════════════
+async function main(){
+  updateHeaderRoute(); positionCameras();
+  // Serialize: load + fully stream one tileset before starting the next, so each
+  // gets the whole request budget (concurrent streaming starved the harbors).
+  const waitReady = async (t, v, ms = 18000) => {
+    if (!t) return;
+    const t0 = Date.now();
+    while (Date.now() - t0 < ms) {
+      v.scene.render();
+      if (t.tilesLoaded) return;
+      await new Promise(r => setTimeout(r, 300));
+    }
+  };
+  const tm = await loadTiles(mainViewer, "main"); await waitReady(tm, mainViewer);
+  const td = await loadTiles(depViewer, "dep");   await waitReady(td, depViewer);
+  const ta = await loadTiles(arrViewer, "arr");   await waitReady(ta, arrViewer);
+
+  infoPane=document.querySelector('.info-pane');
+  // one-time control bindings (loadLiveAndRoute may run again on port changes)
+  const depSlider=document.getElementById('depSlider'); let deb=null;
+  depSlider.addEventListener('input',()=>{ depOffsetHours=parseInt(depSlider.value,10); updateDepClock(); if(deb)clearTimeout(deb); deb=setTimeout(rerouteAndRender,150); });
+  document.getElementById('scrub').addEventListener('input',e=>{ setPlaying(false); setScrub(parseFloat(e.target.value),true); });
+  document.getElementById('playBtn').addEventListener('click',()=>setPlaying(!playing));
+  document.getElementById('windBtn').addEventListener('click',()=>{ windShown=!windShown; if(windPLC)windPLC.show=windShown;
+    document.getElementById('windBtn').classList.toggle('active',windShown); });
+  bindPortSearch();
+
+  await loadLiveAndRoute();
+}
+
+// control hooks for /eval
+window.m = { Cesium, mainViewer, depViewer, arrViewer, reroute:rerouteAndRender,
+  routes:()=>lastRoutes, env:()=>makeEnv(), setPort,
+  scrubTo:(h)=>{ setPlaying(false); setScrub(h); },
+  play:()=>setPlaying(true), pause:()=>setPlaying(false),
+  state:()=>({ routes:lastRoutes?lastRoutes.length:0, arrived:lastRoutes?lastRoutes.filter(r=>r.arrived).length:0,
+    scrubH, maxScrubH, playing, windGrid:windGrid?windGrid.length:0, depOffsetHours, useCurrents,
+    dep:START.name, arr:DEST.name }),
+  flyMain:(lon,lat,h,p=-90)=>mainViewer.camera.setView({destination:Cesium.Cartesian3.fromDegrees(lon,lat,h),orientation:{heading:0,pitch:Cesium.Math.toRadians(p),roll:0}}) };
+console.log("[routing] control hooks ready: window.m");
+main();
+</script>
+</body>
+</html>

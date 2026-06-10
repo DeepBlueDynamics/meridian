@@ -1,0 +1,14 @@
+{
+  "name": "meridian",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Meridian — marine navigation (Electron + Cesium, Google Photorealistic 3D Tiles).",
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^33.0.0"
+  }
+}

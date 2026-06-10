@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Meridian — Vessel Setup</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --paper:#07223d; --paper-deep:#04162b; --paper-edge:#0a2c52;
+    --ink:#e8f1f7; --ink-dim:#9ec5fe; --ink-faint:#4a7ab0;
+    --grid:#0e3463; --grid-dim:#0b2a52;
+    --amber:#f2c94c; --amber-warm:#f2994a; --hot:#eb5757; --highlight:#ffd166; --cool:#4ecdc4;
+    --serif:'DM Serif Display',serif; --sans:'DM Sans',sans-serif; --mono:'IBM Plex Mono',monospace;
+  }
+  * { box-sizing:border-box; }
+  /* Single-screen instrument page — never scrolls; the polar plot scales to fit. */
+  html,body { margin:0; padding:0; height:100vh; overflow:hidden; background:var(--paper); color:var(--ink); font-family:var(--sans); }
+  body { display:flex; flex-direction:column; }
+  body {
+    background:
+      linear-gradient(135deg, rgba(255,255,255,0.015) 0%, transparent 100%),
+      repeating-linear-gradient(0deg,  var(--grid-dim) 0 1px, transparent 1px 24px),
+      repeating-linear-gradient(90deg, var(--grid-dim) 0 1px, transparent 1px 24px),
+      repeating-linear-gradient(0deg,  var(--grid) 0 1px, transparent 1px 120px),
+      repeating-linear-gradient(90deg, var(--grid) 0 1px, transparent 1px 120px),
+      radial-gradient(ellipse at center, var(--paper) 0%, var(--paper-deep) 90%);
+  }
+
+  /* shared view nav */
+  .viewnav { display:flex; gap:8px; padding:12px 24px 0; }
+  .viewnav .nv { font-family:var(--mono); font-size:11px; letter-spacing:0.18em; text-transform:uppercase;
+    color:var(--ink-dim); text-decoration:none; border:1px solid var(--ink-faint); padding:7px 14px; border-radius:3px; }
+  .viewnav .nv:hover { color:var(--ink); border-color:var(--ink-dim); background:rgba(158,197,254,0.06); }
+  .viewnav .nv.active { color:var(--amber); border-color:var(--amber); background:rgba(242,201,76,0.08); }
+
+  .title-block { border:1px solid var(--ink-dim); padding:16px 24px 12px; margin:14px 24px 0;
+    display:grid; grid-template-columns:2.4fr 1fr 1fr 1fr 1fr; gap:14px; position:relative; background:rgba(4,22,43,0.45); }
+  .title-block::before { content:''; position:absolute; top:4px; left:4px; right:4px; bottom:4px; border:1px solid var(--ink-faint); pointer-events:none; }
+  .title-block .main { font-family:var(--serif); font-style:italic; font-size:28px; line-height:1.05; color:var(--ink); }
+  .title-block .main .sub { display:block; font-family:var(--mono); font-style:normal; font-size:10px; letter-spacing:0.35em; color:var(--ink-dim); text-transform:uppercase; margin-top:6px; }
+  .field { display:flex; flex-direction:column; gap:4px; }
+  .field .label { font-family:var(--mono); font-size:9px; letter-spacing:0.22em; color:var(--ink-faint); text-transform:uppercase; }
+  .field .value { font-family:var(--mono); font-size:13px; font-weight:500; color:var(--ink); font-variant-numeric:tabular-nums; }
+
+  main { display:grid; grid-template-columns:300px 1fr 320px; gap:22px; padding:18px 24px; align-items:start;
+    flex:1; min-height:0; overflow:hidden; }
+  main > .panel, main > .plot-wrap { max-height:100%; overflow-y:auto; }
+  .panel { border:1px solid var(--ink-dim); background:rgba(4,22,43,0.55); padding:16px 16px 18px; position:relative; }
+  .panel::before { content:''; position:absolute; top:3px; left:3px; right:3px; bottom:3px; border:1px solid var(--ink-faint); pointer-events:none; }
+  .panel h3 { margin:0 0 12px 0; font-family:var(--serif); font-style:italic; font-size:18px; color:var(--amber); font-weight:400; }
+  .panel h3 .num { font-family:var(--mono); font-style:normal; font-size:10px; letter-spacing:0.25em; color:var(--ink-faint); margin-right:8px; }
+
+  #boatSearch { width:100%; padding:9px 11px; background:var(--paper-deep); border:1px solid var(--ink-faint);
+    color:var(--ink); font-family:var(--mono); font-size:12px; outline:none; margin-bottom:8px; }
+  #boatSearch:focus { border-color:var(--amber); }
+  .boat-list { display:flex; flex-direction:column; gap:1px; max-height:340px; overflow-y:auto; margin-bottom:8px; }
+  .boat-btn { text-align:left; padding:8px 11px; background:transparent; border:1px solid var(--ink-faint);
+    color:var(--ink-dim); cursor:pointer; font-family:var(--mono); font-size:11px; display:flex; flex-direction:column; gap:2px; }
+  .boat-btn:hover { background:rgba(158,197,254,0.06); color:var(--ink); }
+  .boat-btn.active { border-color:var(--amber); color:var(--amber); background:rgba(242,201,76,0.08); }
+  .boat-btn .name { font-weight:500; letter-spacing:0.03em; }
+  .boat-btn .meta { font-size:9px; letter-spacing:0.12em; opacity:0.7; text-transform:uppercase; }
+  .list-status { font-family:var(--mono); font-size:10px; color:var(--ink-faint); letter-spacing:0.1em; margin-bottom:10px; }
+
+  .use-btn { width:100%; padding:11px; background:rgba(78,205,196,0.10); border:1px solid var(--cool); color:var(--cool);
+    cursor:pointer; font-family:var(--mono); font-size:12px; letter-spacing:0.15em; text-transform:uppercase; font-weight:600; }
+  .use-btn:hover { background:rgba(78,205,196,0.18); }
+  .use-note { font-family:var(--mono); font-size:10px; color:var(--ink-faint); margin-top:8px; text-align:center; letter-spacing:0.05em; }
+  .use-note.ok { color:var(--cool); }
+
+  .tws-control { margin-top:6px; }
+  .tws-control .row { display:flex; align-items:baseline; gap:8px; margin-bottom:8px; }
+  .tws-control .row .value { font-family:var(--mono); font-size:22px; font-weight:500; color:var(--amber); font-variant-numeric:tabular-nums; line-height:1; }
+  .tws-control .row .unit { font-family:var(--mono); font-size:10px; color:var(--ink-faint); letter-spacing:0.2em; text-transform:uppercase; }
+  .tws-control .row .label { font-family:var(--mono); font-size:9px; letter-spacing:0.22em; color:var(--ink-faint); text-transform:uppercase; }
+  input[type="range"] { width:100%; -webkit-appearance:none; appearance:none; height:2px; background:var(--ink-faint); outline:none; margin:14px 0 8px; }
+  input[type="range"]::-webkit-slider-thumb { -webkit-appearance:none; width:14px; height:14px; border-radius:50%; background:var(--amber); cursor:pointer; border:2px solid var(--paper-deep); box-shadow:0 0 0 1px var(--amber); }
+  .tws-marks { display:flex; justify-content:space-between; font-family:var(--mono); font-size:9px; color:var(--ink-faint); }
+
+  .plot-wrap { border:1px solid var(--ink-dim); padding:18px; background:rgba(4,22,43,0.6); position:relative; }
+  .plot-wrap::before { content:''; position:absolute; top:5px; left:5px; right:5px; bottom:5px; border:1px solid var(--ink-faint); pointer-events:none; }
+  .plot-header { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:8px; font-family:var(--mono); font-size:9px; letter-spacing:0.25em; color:var(--ink-faint); text-transform:uppercase; }
+  .plot-header .right { color:var(--amber); }
+  svg.polar { width:100%; height:auto; max-height:calc(100vh - 280px); display:block; margin:0 auto; }
+  svg.polar .grid-circle { fill:none; stroke:var(--ink-faint); stroke-width:0.5; opacity:0.5; }
+  svg.polar .grid-circle.major { stroke:var(--ink-dim); opacity:0.6; }
+  svg.polar .grid-radial { stroke:var(--ink-faint); stroke-width:0.5; opacity:0.4; }
+  svg.polar .grid-radial.major { stroke:var(--ink-dim); opacity:0.6; }
+  svg.polar .speed-label { fill:var(--ink-faint); font-family:var(--mono); font-size:9px; }
+  svg.polar .angle-label { fill:var(--ink-dim); font-family:var(--mono); font-size:11px; font-weight:500; }
+  svg.polar .nogo { fill:var(--ink-faint); opacity:0.05; }
+  svg.polar .nogo-label { fill:var(--ink-faint); font-family:var(--mono); font-size:9px; letter-spacing:0.3em; text-transform:uppercase; }
+  svg.polar .curve { fill:none; stroke-width:1.1; opacity:0.35; transition:opacity 0.15s, stroke-width 0.15s; }
+  svg.polar .curve.active { opacity:1; stroke-width:2.2; filter:drop-shadow(0 0 8px currentColor); }
+  svg.polar .wind-arrow { stroke:var(--amber); stroke-width:1.5; fill:none; }
+  svg.polar .wind-arrow-head { fill:var(--amber); stroke:none; }
+  svg.polar .wind-label { fill:var(--amber); font-family:var(--mono); font-size:10px; letter-spacing:0.3em; text-transform:uppercase; font-weight:500; }
+  svg.polar .boat-dot { fill:var(--ink); stroke:var(--paper-deep); stroke-width:1; }
+  svg.polar .vmg-marker { fill:var(--amber); stroke:var(--paper-deep); stroke-width:1.5; }
+  svg.polar .vmg-line { stroke:var(--amber); stroke-width:0.8; stroke-dasharray:3 3; opacity:0.5; fill:none; }
+
+  .readout { display:grid; grid-template-columns:1fr 1fr; gap:14px 18px; margin-bottom:18px; }
+  .read { border-left:2px solid var(--ink-faint); padding-left:10px; }
+  .read.up { border-left-color:var(--amber); } .read.dn { border-left-color:var(--amber-warm); }
+  .read .label { font-family:var(--mono); font-size:9px; letter-spacing:0.22em; color:var(--ink-faint); text-transform:uppercase; margin-bottom:3px; }
+  .read .v { font-family:var(--mono); font-size:20px; font-weight:500; color:var(--ink); font-variant-numeric:tabular-nums; line-height:1; }
+  .read .v .sub { font-size:10px; color:var(--ink-faint); margin-left:4px; }
+  .read .x { font-family:var(--mono); font-size:10px; color:var(--ink-dim); margin-top:4px; }
+  .hint { border-top:1px solid var(--ink-faint); padding-top:14px; font-size:12px; line-height:1.6; color:var(--ink-dim); }
+  .hint strong { color:var(--amber); }
+  footer { text-align:center; padding:10px 24px 14px; font-family:var(--mono); font-size:10px; color:var(--ink-faint); letter-spacing:0.2em; text-transform:uppercase; flex-shrink:0; }
+  .boat-btn .meta .est { color:var(--amber-warm); }
+  @media (max-width:1100px) { main { grid-template-columns:1fr; } }
+</style>
+</head>
+<body>
+
+<nav class="viewnav">
+  <a class="nv active" href="setup.html">⚙ Setup</a>
+  <a class="nv" href="routing.html">🌊 Routing</a>
+  <a class="nv" href="index.html">🌐 Harbor</a>
+</nav>
+
+<div class="title-block">
+  <div class="main">Vessel Setup<span class="sub">Meridian · ORC Polar Profile</span></div>
+  <div class="field"><span class="label">Maker</span><span class="value" id="tb-maker">—</span></div>
+  <div class="field"><span class="label">Model</span><span class="value" id="tb-model">—</span></div>
+  <div class="field"><span class="label">Designer · Year</span><span class="value" id="tb-dy">—</span></div>
+  <div class="field"><span class="label">LOA</span><span class="value" id="tb-loa">—</span></div>
+</div>
+
+<main>
+  <aside class="panel">
+    <h3><span class="num">A.01</span>Vessel (ORC fleet)</h3>
+    <input id="boatSearch" type="text" placeholder="Search maker, model, designer — Beneteau, J/, X-Yachts…" autocomplete="off" />
+    <div class="list-status" id="listStatus">Loading ORC fleet…</div>
+    <div class="boat-list" id="boatList"></div>
+    <button class="use-btn" id="useBtn">✓ Use this vessel</button>
+    <div class="use-note" id="useNote">Sets the active vessel for routing.</div>
+
+    <h3 style="margin-top:20px"><span class="num">A.02</span>True Wind Speed</h3>
+    <div class="tws-control">
+      <div class="row"><span class="value" id="twsValue">12</span><span class="unit">kt</span><span class="label" style="margin-left:auto">TWS</span></div>
+      <input id="twsSlider" type="range" min="0" max="8" step="1" value="4" />
+      <div class="tws-marks" id="twsMarks"></div>
+    </div>
+  </aside>
+
+  <div class="plot-wrap">
+    <div class="plot-header"><span>Speed Curves (knots)</span><span class="right" id="plotMode">—</span></div>
+    <svg class="polar" viewBox="-360 -360 720 720" id="polarSvg" xmlns="http://www.w3.org/2000/svg"></svg>
+  </div>
+
+  <aside class="panel">
+    <h3><span class="num">A.03</span>VMG Readout</h3>
+    <div class="readout">
+      <div class="read up"><div class="label">Best VMG ▲</div><div class="v" id="rVmgUp">—<span class="sub">kt</span></div><div class="x" id="rVmgUpAng">—</div></div>
+      <div class="read dn"><div class="label">Best VMG ▼</div><div class="v" id="rVmgDn">—<span class="sub">kt</span></div><div class="x" id="rVmgDnAng">—</div></div>
+    </div>
+    <h3 style="margin-top:6px"><span class="num">A.04</span>Sail Plan</h3>
+    <div class="readout">
+      <div class="read"><div class="label">Mainsail</div><div class="v" id="sailMain">—<span class="sub">m²</span></div></div>
+      <div class="read"><div class="label">Headsail</div><div class="v" id="sailGenoa">—<span class="sub">m²</span></div></div>
+      <div class="read"><div class="label">Spinnaker</div><div class="v" id="sailSpin">—<span class="sub">m²</span></div><div class="x" id="sailSpinType">—</div></div>
+      <div class="read"><div class="label">LOA · GPH</div><div class="v" id="sailLoa" style="font-size:14px">—</div></div>
+    </div>
+    <h3 style="margin-top:6px"><span class="num">A.05</span>Notes</h3>
+    <div class="hint">
+      <p>Polars are <strong>real ORC certificate VPP allowances</strong> from <code>orc-data</code> — boat speed (BSP) vs true wind angle (TWA) at each true wind speed (TWS).</p>
+      <p>Sail areas (main / headsail / spinnaker) come from the same certificate. Pick a vessel and press <strong>Use this vessel</strong>; the router then runs that exact polar across the live wind field.</p>
+    </div>
+  </aside>
+</main>
+
+<footer>ORC certificate VPP data · DeepBlueDynamics/orc-data · pick a vessel, then go to Routing</footer>
+
+<script src="lib/telemetry.js"></script>
+<script src="lib/vessel.js"></script>
+<script src="lib/orcdata.js"></script>
+<script>
+// ── state ──
+let fleet = [];
+let active = null;     // active boat object {name,twa,tws,bsp,...}
+let twsIdx = 0;        // index into active.tws
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const SCALE = 28, MAX_KT = 11;
+
+// ── math ──
+function bspAt(boat, twa, tws) {
+  twa = Math.abs(twa); if (twa > 180) twa = 360 - twa;
+  const A = boat.twa, T = boat.tws;
+  if (twa < A[0]) return 0;
+  if (twa > A[A.length-1]) twa = A[A.length-1];
+  let i0 = 0; for (let i=0;i<A.length-1;i++){ if (twa>=A[i]&&twa<=A[i+1]){i0=i;break;} }
+  const i1=i0+1, t=(twa-A[i0])/(A[i1]-A[i0]);
+  if (tws < T[0]) tws = T[0]; if (tws > T[T.length-1]) tws = T[T.length-1];
+  let j0=0; for (let j=0;j<T.length-1;j++){ if (tws>=T[j]&&tws<=T[j+1]){j0=j;break;} }
+  const j1=j0+1, s=(tws-T[j0])/(T[j1]-T[j0]);
+  const v00=boat.bsp[i0][j0], v01=boat.bsp[i0][j1], v10=boat.bsp[i1][j0], v11=boat.bsp[i1][j1];
+  return (v00+(v01-v00)*s)*(1-t) + (v10+(v11-v10)*s)*t;
+}
+function bestVmg(boat, tws, lo, hi, sign) {
+  let best={vmg:-1,twa:0,bsp:0};
+  for (let twa=lo; twa<=hi; twa+=0.5){ const bsp=bspAt(boat,twa,tws); const vmg=sign*bsp*Math.cos(twa*Math.PI/180); if (vmg>best.vmg) best={vmg,twa,bsp}; }
+  return best;
+}
+function polarToXY(twa,bsp){ const r=(twa*Math.PI)/180; return [bsp*SCALE*Math.sin(r), -bsp*SCALE*Math.cos(r)]; }
+function twsColor(i,n){ const s=['#6c8eb8','#7fa9d4','#9ec5fe','#a8d5ff','#f2c94c','#f2994a','#eb7c4b','#eb5757','#9d2935']; return s[Math.min(s.length-1, Math.round(i/Math.max(1,n-1)*(s.length-1)))]; }
+function el(tag,attrs={},children=[]){ const e=document.createElementNS(SVG_NS,tag); for(const k in attrs)e.setAttribute(k,attrs[k]); for(const c of (Array.isArray(children)?children:[children])){ if(c==null)continue; e.appendChild(typeof c==='string'?document.createTextNode(c):c);} return e; }
+
+// ── render polar ──
+function renderPolar() {
+  const svg=document.getElementById('polarSvg'); svg.innerHTML=''; if(!active) return;
+  const boat=active, activeTws=boat.tws[twsIdx];
+  const noGo=boat.twa[0], ngR=MAX_KT*SCALE;
+  const [x1,y1]=polarToXY(noGo,MAX_KT), [x2,y2]=polarToXY(-noGo,MAX_KT);
+  svg.appendChild(el('path',{class:'nogo',d:`M 0 0 L ${x2} ${y2} A ${ngR} ${ngR} 0 0 1 ${x1} ${y1} Z`}));
+  svg.appendChild(el('text',{class:'nogo-label',x:0,y:-ngR+16,'text-anchor':'middle'},'No-go'));
+  for(let kt=1;kt<=MAX_KT;kt++){ svg.appendChild(el('circle',{class:kt%2===0?'grid-circle major':'grid-circle',cx:0,cy:0,r:kt*SCALE})); if(kt%2===0)svg.appendChild(el('text',{class:'speed-label',x:3,y:-kt*SCALE+11},`${kt}`)); }
+  for(let ang=0;ang<360;ang+=30){ const [x,y]=polarToXY(ang,MAX_KT); svg.appendChild(el('line',{class:ang%90===0?'grid-radial major':'grid-radial',x1:0,y1:0,x2:x,y2:y})); if(ang===0||(ang>0&&ang<=180)){ const [lx,ly]=polarToXY(ang,MAX_KT+1.0); svg.appendChild(el('text',{class:'angle-label',x:lx,y:ly+4,'text-anchor':'middle'},`${ang}°`)); } }
+  svg.appendChild(el('text',{class:'wind-label',x:0,y:-MAX_KT*SCALE-26,'text-anchor':'middle'},'Wind'));
+  svg.appendChild(el('path',{class:'wind-arrow-head',d:`M 0 ${-MAX_KT*SCALE+2} L -5 ${-MAX_KT*SCALE-6} L 5 ${-MAX_KT*SCALE-6} Z`}));
+  boat.tws.forEach((tws,j)=>{
+    const color=twsColor(j,boat.tws.length), isActive=j===twsIdx;
+    let d=''; boat.twa.forEach((twa,i)=>{ const [x,y]=polarToXY(twa,boat.bsp[i][j]); d+=(i===0?'M ':'L ')+`${x.toFixed(2)} ${y.toFixed(2)} `; });
+    const [fx,fy]=polarToXY(boat.twa[0],boat.bsp[0][j]); d=`M 0 0 L ${fx.toFixed(2)} ${fy.toFixed(2)} `+d.replace(/^M [^ ]+ [^ ]+/,'');
+    [...boat.twa].reverse().forEach((twa,k)=>{ const i=boat.twa.length-1-k; const [x,y]=polarToXY(-twa,boat.bsp[i][j]); d+=`L ${x.toFixed(2)} ${y.toFixed(2)} `; });
+    d+='L 0 0 ';
+    svg.appendChild(el('path',{class:'curve'+(isActive?' active':''),d,stroke:color}));
+  });
+  const up=bestVmg(boat,activeTws,boat.twa[0],90,1), dn=bestVmg(boat,activeTws,90,180,-1);
+  const [ux,uy]=polarToXY(up.twa,up.bsp); svg.appendChild(el('line',{class:'vmg-line',x1:0,y1:0,x2:ux,y2:uy})); svg.appendChild(el('circle',{class:'vmg-marker',cx:ux,cy:uy,r:4.5}));
+  const [dx,dy]=polarToXY(dn.twa,dn.bsp); svg.appendChild(el('line',{class:'vmg-line',x1:0,y1:0,x2:dx,y2:dy})); svg.appendChild(el('circle',{class:'vmg-marker',cx:dx,cy:dy,r:4.5}));
+  svg.appendChild(el('circle',{class:'boat-dot',cx:0,cy:0,r:4}));
+  document.getElementById('rVmgUp').innerHTML=`${up.vmg.toFixed(2)}<span class="sub">kt</span>`;
+  document.getElementById('rVmgUpAng').textContent=`${up.twa.toFixed(0)}° TWA · ${up.bsp.toFixed(2)} kt`;
+  document.getElementById('rVmgDn').innerHTML=`${dn.vmg.toFixed(2)}<span class="sub">kt</span>`;
+  document.getElementById('rVmgDnAng').textContent=`${dn.twa.toFixed(0)}° TWA · ${dn.bsp.toFixed(2)} kt`;
+  document.getElementById('plotMode').textContent=`${boat.tws[0]}–${boat.tws[boat.tws.length-1]} kt · ${activeTws} kt highlighted`;
+}
+
+function renderTitle(){ const b=active; if(!b)return;
+  document.getElementById('tb-maker').textContent=b.maker;
+  document.getElementById('tb-model').textContent=b.model;
+  document.getElementById('tb-dy').textContent=`${b.designer} · ${b.year}`;
+  document.getElementById('tb-loa').textContent=b.loa;
+  const sp=b.sail||{};
+  const m2=(x)=>`${x?x.toFixed(1):'—'}<span class="sub">m²</span>`;
+  document.getElementById('sailMain').innerHTML=m2(sp.main);
+  document.getElementById('sailGenoa').innerHTML=m2(sp.genoa);
+  document.getElementById('sailSpin').innerHTML=m2(sp.spinnaker);
+  document.getElementById('sailSpinType').textContent=sp.spinType||'—';
+  document.getElementById('sailLoa').textContent=`${b.loa}${b.gph?' · GPH '+b.gph:''}`;
+}
+function setupTwsSlider(){ const b=active; if(!b)return; const sl=document.getElementById('twsSlider');
+  sl.min=0; sl.max=b.tws.length-1; let idx=b.tws.indexOf(12); if(idx<0)idx=Math.floor(b.tws.length/2); twsIdx=idx; sl.value=idx;
+  document.getElementById('twsValue').textContent=b.tws[idx];
+  const marks=document.getElementById('twsMarks'); marks.innerHTML=`<span>${b.tws[0]}</span><span>${b.tws[Math.floor(b.tws.length/2)]}</span><span>${b.tws[b.tws.length-1]}</span>`;
+}
+function selectBoat(b){ active=b; setupTwsSlider(); renderTitle(); renderPolar(); renderList(); }
+
+function renderList(){
+  const q=document.getElementById('boatSearch').value;
+  const results=window.OrcData.search(fleet,q);
+  const list=document.getElementById('boatList'); list.innerHTML='';
+  document.getElementById('listStatus').textContent=`${results.length}${results.length>=100?'+':''} of ${fleet.length} models`;
+  for(const b of results){ const btn=document.createElement('button'); btn.className='boat-btn'+(active&&b.id===active.id?' active':'');
+    btn.innerHTML=`<span class="name">${b.model}</span><span class="meta">${b.maker!=='—'?b.maker+' · ':''}${b.year}${b.est?' · <span class="est">est polar</span>':''}</span>`;
+    btn.addEventListener('click',()=>selectBoat(b)); list.appendChild(btn); }
+}
+
+document.getElementById('boatSearch').addEventListener('input',renderList);
+document.getElementById('twsSlider').addEventListener('input',e=>{ twsIdx=parseInt(e.target.value,10); if(active){ document.getElementById('twsValue').textContent=active.tws[twsIdx]; renderPolar(); } });
+document.getElementById('useBtn').addEventListener('click',()=>{ if(!active)return;
+  window.Vessel.set({ id:active.id, maker:active.maker, model:active.model, label:active.label, designer:active.designer, year:active.year, loa:active.loa, sail:active.sail, twa:active.twa, tws:active.tws, bsp:active.bsp });
+  const n=document.getElementById('useNote'); n.textContent=`✓ ${active.label} set as active vessel → Routing`; n.className='use-note ok';
+});
+
+(async function init(){
+  try {
+    fleet = await window.OrcData.load();
+    document.getElementById('listStatus').textContent=`${fleet.length} boats`;
+    // preselect the stored vessel if it's in the fleet, else the first boat
+    const cur = window.Vessel.get();
+    active = fleet.find(b=>b.id===cur.id) || fleet[0];
+    setupTwsSlider(); renderTitle(); renderPolar(); renderList();
+  } catch(e){
+    document.getElementById('listStatus').textContent='Failed to load ORC fleet: '+e.message;
+    console.error('[setup] orc-data load failed', e);
+  }
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Meridian v2 — Layer 0</title>
+<link href="https://cdnjs.cloudflare.com/ajax/libs/cesium/1.124.0/Widgets/widgets.min.css" rel="stylesheet" />
+<style>
+  html, body { margin: 0; height: 100%; background: #04101c; color: #d7e3ee;
+    font-family: ui-monospace, "JetBrains Mono", monospace; overflow: hidden; }
+  #cesium { position: absolute; inset: 0; }
+  /* ToS: Google attribution must stay visible — do not hide credits. */
+  #cesium .cesium-widget-credits { color: #d7e3ee !important; }
+  #hud { position: absolute; left: 14px; bottom: 14px; z-index: 10;
+    background: rgba(8,22,38,0.92); border: 1px solid #2a5577; border-radius: 4px;
+    padding: 8px 12px; font-size: 12px; max-width: 460px; }
+  #hud .ok { color: #6fcf97; } #hud .err { color: #ef6f6c; }
+  #tag { position: absolute; left: 14px; top: 12px; z-index: 10; font-size: 11px;
+    letter-spacing: 0.25em; color: #f4b942; text-transform: uppercase; }
+</style>
+</head>
+<body>
+  <div id="cesium"></div>
+  <nav style="position:absolute;top:10px;right:12px;z-index:20;display:flex;gap:8px;font-family:ui-monospace,monospace;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;">
+    <a href="setup.html" style="color:#8ecae6;text-decoration:none;border:1px solid #2a5577;padding:5px 10px;border-radius:3px;background:rgba(8,22,38,0.7);">⚙ Setup</a>
+    <a href="routing.html" style="color:#8ecae6;text-decoration:none;border:1px solid #2a5577;padding:5px 10px;border-radius:3px;background:rgba(8,22,38,0.7);">🌊 Routing</a>
+    <a href="index.html" style="color:#f4b942;text-decoration:none;border:1px solid #f4b942;padding:5px 10px;border-radius:3px;background:rgba(8,22,38,0.7);">🌐 Harbor</a>
+  </nav>
+  <div id="tag">Meridian v2 · Layer 2 — Bathy stitch</div>
+  <div id="hud">
+    <div><span id="status">Booting…</span></div>
+    <div style="margin-top:8px; display:flex; gap:8px;">
+      <button id="traceBtn" style="background:transparent;border:1px solid #f4b942;color:#f4b942;border-radius:3px;padding:5px 10px;cursor:pointer;font:inherit;font-size:11px;">Trace boundaries (OSM)</button>
+      <button id="clearBtn" style="background:transparent;border:1px solid #2a5577;color:#8ecae6;border-radius:3px;padding:5px 10px;cursor:pointer;font:inherit;font-size:11px;">Clear</button>
+    </div>
+  </div>
+
+  <script src="lib/telemetry.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/cesium/1.124.0/Cesium.js"></script>
+  <script type="module">
+    const statusEl = document.getElementById("status");
+    const setStatus = (m, k = "") => { statusEl.className = k; statusEl.textContent = m; };
+
+    const rootUrl = window.meridian?.tiles?.rootUrl || "/api/3dtiles/v1/3dtiles/root.json";
+
+    Cesium.Ion.defaultAccessToken = ""; // not using Cesium ion for Google tiles
+
+    const viewer = new Cesium.Viewer("cesium", {
+      baseLayer: false, baseLayerPicker: false, geocoder: false, homeButton: false,
+      sceneModePicker: false, navigationHelpButton: false, animation: false,
+      timeline: false, fullscreenButton: false, infoBox: false, selectionIndicator: false,
+      skyAtmosphere: new Cesium.SkyAtmosphere(),
+      terrainProvider: new Cesium.EllipsoidTerrainProvider(),
+    });
+    // Keep the globe ON (dark) — this is where the seafloor (bottom) lives.
+    viewer.scene.globe.baseColor = Cesium.Color.fromCssColorString("#04101c");
+    viewer.scene.globe.showGroundAtmosphere = false;
+    viewer.scene.fog.enabled = false;
+
+    // The ellipsoid globe sits ~geoid-undulation metres ABOVE Google's true sea
+    // level (~ -30 m in San Diego), which made the clip reveal a raised "island"
+    // plateau. We render our own ocean column at the sampled sea level instead, so
+    // the globe is off.
+    viewer.scene.globe.show = false;
+
+    // If clipping isn't supported by this GL context, drop it rather than crash.
+    viewer.scene.renderError.addEventListener(() => {
+      if (window._tileset) { try { window._tileset.clippingPolygons = undefined; } catch (e) { /* noop */ } }
+      setStatus("Clipping unsupported here — removed it; chart still renders.", "err");
+    });
+
+    // San Diego harbor — we have an ENC cell here for the Layer 1 boundary spike.
+    viewer.camera.setView({
+      destination: Cesium.Cartesian3.fromDegrees(-117.17, 32.70, 2200),
+      orientation: { heading: Cesium.Math.toRadians(310), pitch: Cesium.Math.toRadians(-25), roll: 0 },
+    });
+
+    async function loadHarbor() {
+      setStatus("Pre-flight: checking tile proxy…");
+      try {
+        const probe = await fetch(rootUrl);
+        if (!probe.ok) {
+          const raw = await probe.text().catch(() => "");
+          setStatus(`Proxy HTTP ${probe.status}: ${raw.slice(0, 160)}`, "err");
+          return;
+        }
+      } catch (e) {
+        setStatus(`Network error: ${e.message}`, "err");
+        return;
+      }
+      setStatus("Streaming Google Photorealistic 3D Tiles…");
+      try {
+        const tileset = await Cesium.Cesium3DTileset.fromUrl(rootUrl, { showCreditsOnScreen: true });
+        viewer.scene.primitives.add(tileset);
+        window._tileset = tileset; // handy for the next layers
+        setStatus("✓ Harbor online. Loading tiles…", "ok");
+        console.log("[v2] harbor tileset online via proxy");
+        // Wait for the harbor tiles to actually load before sampling sea level —
+        // sampleHeight returns garbage against unloaded tiles.
+        let traced = false;
+        const go = () => { if (traced) return; traced = true; traceBoundaries(); };
+        tileset.initialTilesLoaded.addEventListener(go);
+        setTimeout(go, 6000); // fallback if the event is slow
+      } catch (e) {
+        console.error("[v2] tileset error", e);
+        setStatus(`Tileset error: ${e?.message || e}`, "err");
+      }
+    }
+    loadHarbor();
+
+    // ── Layer 2: boundaries → clip Google over water → render ocean ─────────
+    // OSM water polygons drive two things: (1) clip Google out over water so the
+    // bathy bottom shows, (2) a TRANSLUCENT animated ocean surface so the surface
+    // never occludes the bottom. OSM results are cached (the public Overpass API
+    // 429s if hammered).
+    let oceanPrims = [];
+    const clearBoundaries = () => {
+      oceanPrims.forEach((p) => viewer.scene.primitives.remove(p)); oceanPrims = [];
+      if (window._tileset) { try { window._tileset.clippingPolygons = undefined; } catch (e) { /* noop */ } }
+    };
+
+    async function fetchOsm(s, w, n, e) {
+      const key = "osm:" + [s, w, n, e].map((x) => x.toFixed(2)).join(",");
+      const cached = localStorage.getItem(key);
+      if (cached) { try { return JSON.parse(cached); } catch (e2) { /* refetch */ } }
+      const q = `[out:json][timeout:25];(` +
+        `way["natural"="coastline"](${s},${w},${n},${e});` +
+        `way["natural"="water"](${s},${w},${n},${e});` +
+        `relation["natural"="water"](${s},${w},${n},${e});` +
+        `);out geom;`;
+      const r = await fetch("https://overpass-api.de/api/interpreter", { method: "POST", body: "data=" + encodeURIComponent(q) });
+      if (r.status === 429) { const e3 = new Error("OSM rate-limited (429) — wait ~30s and retry; results cache after the first hit."); e3.soft = true; throw e3; }
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const data = await r.json();
+      try { localStorage.setItem(key, JSON.stringify(data)); } catch (e4) { /* quota */ }
+      return data;
+    }
+
+    // Decimate a ring to cut vertex/edge cost (clip SDF + polygon fill scale with it).
+    function simplifyRing(positions, maxPts) {
+      if (positions.length <= maxPts) return positions;
+      const step = Math.ceil(positions.length / maxPts);
+      const out = [];
+      for (let i = 0; i < positions.length; i += step) out.push(positions[i]);
+      return out;
+    }
+
+    // Clip Google out of water so the bathy bottom shows. Clipping cost scales
+    // with polygon EDGE count — keep it tiny: a few biggest bodies, simplified.
+    function clipGoogleToLand(waterRings) {
+      const tileset = window._tileset;
+      if (!tileset || !waterRings.length) return;
+      const top = waterRings.slice(0, 5).map((r) => simplifyRing(r, 64)).filter((r) => r.length >= 3);
+      try {
+        tileset.clippingPolygons = new Cesium.ClippingPolygonCollection({
+          polygons: top.map((positions) => new Cesium.ClippingPolygon({ positions })),
+        });
+        console.log("[v2] clipped Google over " + top.length + " water polygons");
+      } catch (err) { console.error("[v2] clip error", err); }
+    }
+
+    // Median Google surface height around a point = local sea level (ellipsoid
+    // metres). Accounts for the geoid offset so the ocean sits ON the water.
+    function sampleSeaLevel(lon, lat) {
+      const offs = [[0, 0], [0.004, 0], [-0.004, 0], [0, 0.004], [0, -0.004], [0.008, 0], [-0.008, 0]];
+      const hs = [];
+      for (const [dlo, dla] of offs) {
+        const h = viewer.scene.sampleHeight(Cesium.Cartographic.fromDegrees(lon + dlo, lat + dla));
+        // Sea level is within the geoid range (±~110 m). Reject bogus reads from
+        // not-yet-loaded tiles (e.g. -30228) and tall land.
+        if (h != null && isFinite(h) && h > -150 && h < 150) hs.push(h);
+      }
+      if (!hs.length) return -30; // fallback near SD geoid
+      hs.sort((a, b) => a - b);
+      return hs[Math.floor(hs.length / 2)];
+    }
+
+    function polyInstances(rings, height, color) {
+      const attr = Cesium.ColorGeometryInstanceAttribute.fromColor(color);
+      return rings.map((positions) => new Cesium.GeometryInstance({
+        geometry: new Cesium.PolygonGeometry({
+          polygonHierarchy: new Cesium.PolygonHierarchy(positions),
+          height,
+          vertexFormat: Cesium.PerInstanceColorAppearance.VERTEX_FORMAT,
+        }),
+        attributes: { color: attr },
+      }));
+    }
+
+    // Ocean column at the true sea level: a darker bottom a few metres down, and a
+    // translucent surface on top so the surface never occludes the bottom.
+    function renderWaterColumn(waterRings, seaLevel) {
+      oceanPrims.forEach((p) => viewer.scene.primitives.remove(p)); oceanPrims = [];
+      const rings = waterRings.slice(0, 12).map((r) => simplifyRing(r, 96)).filter((r) => r.length >= 3);
+      if (!rings.length) return;
+      const bottom = new Cesium.Primitive({
+        geometryInstances: polyInstances(rings, seaLevel - 8, new Cesium.Color(0.03, 0.13, 0.20, 1.0)),
+        appearance: new Cesium.PerInstanceColorAppearance({ translucent: false, flat: true }),
+      });
+      const surface = new Cesium.Primitive({
+        geometryInstances: polyInstances(rings, seaLevel, new Cesium.Color(0.10, 0.32, 0.48, 0.45)),
+        appearance: new Cesium.PerInstanceColorAppearance({ translucent: true, flat: true }),
+      });
+      viewer.scene.primitives.add(bottom);
+      viewer.scene.primitives.add(surface);
+      oceanPrims.push(bottom, surface);
+    }
+
+    async function traceBoundaries() {
+      const rect = viewer.camera.computeViewRectangle();
+      if (!rect) { setStatus("Tilt down to a harbor first (sky in view).", "err"); return; }
+      const s = Cesium.Math.toDegrees(rect.south), w = Cesium.Math.toDegrees(rect.west);
+      const n = Cesium.Math.toDegrees(rect.north), e = Cesium.Math.toDegrees(rect.east);
+      setStatus("Getting OSM water boundaries…");
+      let data;
+      try { data = await fetchOsm(s, w, n, e); }
+      catch (err) { setStatus(err.message, "err"); return; }
+
+      clearBoundaries();
+      const waterRings = [];
+      const addWay = (geom, isCoast) => {
+        if (isCoast) return; // coastline lines were just the Layer 1 spike
+        const positions = geom.map((g) => Cesium.Cartesian3.fromDegrees(g.lon, g.lat));
+        if (positions.length >= 3) waterRings.push(positions);
+      };
+      for (const el of data.elements || []) {
+        if (el.type === "way" && el.geometry) addWay(el.geometry, el.tags?.natural === "coastline");
+        else if (el.type === "relation" && el.members) {
+          for (const m of el.members) if (m.geometry) addWay(m.geometry, false);
+        }
+      }
+      waterRings.sort((a, b) => b.length - a.length); // biggest first; clip/ocean take the top few
+      const seaLevel = sampleSeaLevel((w + e) / 2, (s + n) / 2);
+      clipGoogleToLand(waterRings);
+      renderWaterColumn(waterRings, seaLevel);
+      setStatus(`Ocean @ sea level ${Math.round(seaLevel)} m (ellipsoid) — ${waterRings.length} water polys.`, "ok");
+      console.log(`[v2] ocean @ seaLevel=${Math.round(seaLevel)} over ${waterRings.length} polys`);
+    }
+
+    document.getElementById("traceBtn").addEventListener("click", traceBoundaries);
+    document.getElementById("clearBtn").addEventListener("click", () => { clearBoundaries(); setStatus("Cleared (Google restored).", ""); });
+
+    // ── Control hooks for the /eval endpoint (agent drives the app via these) ──
+    window.m = {
+      viewer,
+      Cesium,
+      get camera() {
+        const p = viewer.camera.positionCartographic;
+        return {
+          lon: Cesium.Math.toDegrees(p.longitude), lat: Cesium.Math.toDegrees(p.latitude),
+          height: Math.round(p.height),
+          heading: Math.round(Cesium.Math.toDegrees(viewer.camera.heading)),
+          pitch: Math.round(Cesium.Math.toDegrees(viewer.camera.pitch)),
+        };
+      },
+      setCamera(lon, lat, height, heading = 0, pitch = -30) {
+        viewer.camera.setView({
+          destination: Cesium.Cartesian3.fromDegrees(lon, lat, height),
+          orientation: { heading: Cesium.Math.toRadians(heading), pitch: Cesium.Math.toRadians(pitch), roll: 0 },
+        });
+        return this.camera;
+      },
+      trace: () => traceBoundaries(),
+      sampleSeaLevel: (lon, lat) => sampleSeaLevel(lon, lat),
+      setClipInverse(b) { if (window._tileset?.clippingPolygons) { window._tileset.clippingPolygons.inverse = !!b; return "inverse=" + !!b; } return "no clip"; },
+      removeClip() { if (window._tileset) window._tileset.clippingPolygons = undefined; return "clip removed"; },
+      removeOcean() { if (oceanPrimitive) { viewer.scene.primitives.remove(oceanPrimitive); oceanPrimitive = null; } return "ocean removed"; },
+      hasClip: () => !!window._tileset?.clippingPolygons,
+    };
+    console.log("[v2] control hooks ready: window.m");
+  </script>
+</body>
+</html>

@@ -1,102 +1,81 @@
-# Meridian Terminal
+# Meridian
 
-Maritime chart application with 2D/3D views, OpenSeaMap integration, and terrain visualization.
+Marine navigation built on **Electron + CesiumJS**, rendering **Google Photorealistic
+3D Tiles** with the API key hidden behind a main-process proxy. Built one layer at a
+time — see `docs/`.
 
-## Prerequisites
-
-- Node.js 18+ (recommend using `nvm` or `fnm`)
-- npm (comes with Node.js)
-
-### macOS Setup
+## Run
 
 ```bash
-# Install Node.js via Homebrew
-brew install node
-
-# Or use nvm (recommended)
-brew install nvm
-nvm install 20
-nvm use 20
-```
-
-## Installation
-
-```bash
-# Clone and enter directory
-cd meridian-terminal
-
-# Install dependencies
 npm install
+cp .env.example .env     # then put your Google Maps API key in .env
+npm start
 ```
 
-## Running
+The Google key lives **only** in the Electron main process. The renderer loads tiles
+from a custom `app://3dtiles/*` protocol; the main process attaches the key, rewrites
+Google origins back to the proxy, and streams tiles through — so the key never reaches
+the page and the browser only ever talks to the proxy. See `docs/01-vision-and-architecture.md`.
 
-### Development (Browser)
+## Views
 
-```bash
-npm run dev
+`electron/main.js` starts on the **Vessel Setup** page (`setup.html` — pick a boat
+from the live ORC fleet; its certificate polar drives the router) unless
+`MERIDIAN_VIEW=routing|harbor` selects another view; the header nav switches at runtime:
+
+- **`routing.html`** (default) — Newport→Bermuda **isochrone ensemble routing** on
+  Google 3D Tiles. Each ensemble member gets a true optimal route from the isochrone
+  engine (`lib/router.js`: heading fan + sector pruning, tack/gybe penalties, current
+  vectors, land-avoidance boxes, sub-step arrival ETAs), so the fleet genuinely
+  diverges. Member routes are colored by arrival percentile (teal fast → red slow),
+  with the 5–95% envelope, median line + 24h ticks, and Newport / Bermuda harbor
+  insets. A **passage playback bar** (play / scrub) animates the 51-boat fleet along
+  their routes with a live median SOG / distance-to-go readout, synced to a **live
+  wind-field arrow layer** (deterministic Open-Meteo grid over the corridor, colored
+  by TWS) and a "now" marker on the ETA histogram. Panel: vessel polar, departure
+  offset, currents toggle, ETA distribution, risk metrics. The DEP/ARR header
+  boxes are clickable — search any port (Nominatim geocoding) and the whole
+  pipeline refetches + re-routes for the new leg; route persists in localStorage.
+  Header also shows live WIND / GUST at the fleet-median boat, and each harbor
+  inset shows its local wind. Pathological tracks are pruned from the display
+  ("N✂" in the Arrived stat). Live data: Open-Meteo ensemble wind + marine
+  currents + forecast grid, Nominatim ports (no keys).
+- **Vessel fleet** (`setup.html`) — live ORC certificate polars plus built-in
+  estimated cruising-catamaran polars (Lagoon 380/42/450F, badged "est polar";
+  ORC doesn't certify multihulls).
+- **Telemetry** — renderer errors (window.onerror, unhandled rejections, Cesium
+  renderError) POST to the control server's `/telemetry` and append to
+  `telemetry.log` (gitignored) — a local stub for a future remote sink.
+- **`index.html`** (`MERIDIAN_VIEW=harbor`) — the harbor/ocean spike: Google 3D Tiles
+  with bathy + seamarks + grid overlays and a translucent ocean stitched at the real
+  (geoid-corrected) sea level.
+
+## Project layout
+
+```
+electron/        main.js (tile proxy + control server), preload.js
+lib/             router.js (isochrone engine), vessel.js (active-vessel store), orcdata.js (ORC fleet)
+index.html       harbor / ocean-stitch view
+routing.html     isochrone-routing view (default)
+docs/            01 architecture · 02 boundaries & bathy stitch · 03 layered roadmap
+scripts/         convert-s57-to-pmtiles.sh, test-3dtiles-proxy.mjs
+enc_charts/      S-57 ENC source data (San Diego cell)
+.env             GOOGLE_MAPS_API_KEY (gitignored)
 ```
 
-Opens at http://localhost:5173
+## Dev control API
 
-### Development (Electron Desktop App)
+The main process runs a local control server on `127.0.0.1:9123` for headless
+driving/observation (used during development):
 
-```bash
-# Terminal 1: Start Vite dev server
-npm run dev
+- `GET /screenshot[?view=dep|arr]` — PNG of the rendered Cesium canvas
+- `POST /eval` (body = JS) — run JS in the renderer (`window.m.*` exposes camera/viewers)
+- `POST /reload` — reload the page
 
-# Terminal 2: Start Electron (after Vite is running)
-npm run dev:electron
+Set `MERIDIAN_DEVTOOLS=1` to open DevTools.
 
-# Or run both together:
-npm run dev:full
-```
+## ToS / cost notes
 
-### Production Build
-
-```bash
-# Build web assets
-npm run build
-
-# Build Electron app (creates distributable)
-npm run build:electron
-```
-
-## Features
-
-- **2D Map**: Leaflet with OpenStreetMap + OpenSeaMap overlays
-- **3D Map**: MapLibre GL with terrain elevation (AWS Terrain Tiles)
-- **Layers**: Seamarks, Bathymetry, Satellite Imagery, Grid overlay
-- **Depth Soundings**: Grid-based depth markers that reveal on hover
-- **Measure Tool**: Distance measurement in nm/km/mi
-- **Search**: Claude-powered geocoding (requires API key)
-- **Orbit Mode**: Auto-rotate 3D view
-
-## Environment Variables
-
-Create a `.env` file in the project root:
-
-```bash
-# For Claude-powered search (optional)
-VITE_ANTHROPIC_API_KEY=sk-ant-...
-```
-
-## Scripts
-
-| Command | Description |
-|---------|-------------|
-| `npm run dev` | Start Vite dev server |
-| `npm run build` | Build for production |
-| `npm run preview` | Preview production build |
-| `npm run dev:electron` | Start Electron (requires dev server) |
-| `npm run dev:full` | Start both Vite and Electron |
-| `npm run build:electron` | Build Electron distributable |
-| `npm run lint` | Run ESLint |
-
-## Tech Stack
-
-- React 19
-- Vite 7
-- Leaflet (2D maps)
-- MapLibre GL JS (3D maps)
-- Electron (desktop app)
+Google Photorealistic 3D Tiles are online-only and metered (one root request ≈ one
+session). Attribution (Cesium credits) must stay visible; no tile caching. Set a daily
+quota + budget alert in Google Cloud Console. See `docs/01`.
