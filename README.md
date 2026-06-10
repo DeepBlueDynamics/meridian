@@ -23,16 +23,22 @@ the page and the browser only ever talks to the proxy. See `docs/01-vision-and-a
 from the live ORC fleet; its certificate polar drives the router) unless
 `MERIDIAN_VIEW=routing|harbor` selects another view; the header nav switches at runtime:
 
-- **`routing.html`** (default) — Newport→Bermuda **isochrone ensemble routing** on
-  Google 3D Tiles. Each ensemble member gets a true optimal route from the isochrone
-  engine (`lib/router.js`: heading fan + sector pruning, tack/gybe penalties, current
-  vectors, land-avoidance boxes, sub-step arrival ETAs), so the fleet genuinely
-  diverges. Member routes are colored by arrival percentile (teal fast → red slow),
-  with the 5–95% envelope, median line + 24h ticks, and Newport / Bermuda harbor
-  insets. A **passage playback bar** (play / scrub) animates the 51-boat fleet along
-  their routes with a live median SOG / distance-to-go readout, synced to a **live
-  wind-field arrow layer** (deterministic Open-Meteo grid over the corridor, colored
-  by TWS) and a "now" marker on the ETA histogram. Panel: vessel polar, departure
+- **`routing.html`** (default) — **isochrone ensemble routing** on Google 3D
+  Tiles. Each ensemble member gets a true optimal route from the isochrone engine
+  (`lib/router.js`: heading fan + course-axis sector pruning, tack/gybe penalties,
+  current vectors, sub-step arrival ETAs). **Motoring** is modeled
+  PredictWind-style — engine at X kt whenever sailing VMG toward the mark drops
+  below Y kt (with hysteresis), editable in the panel and persisted; engine
+  hours / % motoring reported. **Land avoidance** uses Natural Earth coastline
+  polygons (`lib/landmask.js`: 50m land + 10m small islands, corridor rasterized
+  to ~1.2 nm cells with a one-cell safety dilation; ports snap to water anchors),
+  verified to 0 land intersections at 0.1 nm on a Ft. Lauderdale→St John run.
+  The display shows the **P5 / P50 / P95 representative member routes** (solid =
+  sailing, dashed = motoring, 24h ticks on P50) over a dashed 5–95% envelope —
+  raw 51-member spaghetti sits behind a FLEET toggle. A **passage playback bar**
+  (play / scrub) animates the fleet with a live median SOG / ⚙-motor /
+  distance-to-go readout, synced to a **live wind-field arrow layer** and a "now"
+  marker on the ETA histogram. Panel: vessel polar, departure
   offset, currents toggle, ETA distribution, risk metrics. The DEP/ARR header
   boxes are clickable — search any port (Nominatim geocoding) and the whole
   pipeline refetches + re-routes for the new leg; route persists in localStorage.

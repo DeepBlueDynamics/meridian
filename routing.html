@@ -86,6 +86,12 @@
   .scrubbar input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:13px; height:13px; border-radius:50%; background:var(--mean); cursor:pointer; border:2px solid var(--bg); }
   .scrubbar .t { font-family:var(--mono); font-size:10.5px; color:var(--ink-dim); white-space:nowrap; }
   .scrubbar .t b { color:var(--envelope); }
+  .legend { position:absolute; right:14px; top:10px; z-index:5; display:flex; gap:14px; align-items:center;
+    font-family:var(--mono); font-size:9.5px; letter-spacing:0.08em; color:var(--ink-dim);
+    background:rgba(10,15,24,0.65); border:1px solid var(--line); padding:5px 10px; pointer-events:none; }
+  .legend .li { display:inline-flex; align-items:center; gap:5px; }
+  .legend .li i { display:inline-block; width:16px; height:3px; border-radius:1px; }
+  .legend .li i.dash { background:repeating-linear-gradient(90deg,var(--ink-dim) 0 4px,transparent 4px 7px); }
 
   .harbors { display:grid; grid-template-columns:1fr 1fr; border-top:1px solid var(--line); overflow:hidden; }
   .harbors .pane:last-child { border-right:none; }
@@ -127,6 +133,11 @@
   .toggle-btn.active { border-color:var(--cool); color:var(--ink); background:rgba(78,205,196,0.06); }
   .toggle-btn.active .dot { background:var(--cool); box-shadow:0 0 8px var(--cool); }
   .toggle-btn .label { flex:1; } .toggle-btn .meta { font-size:9px; color:var(--ink-faint); text-transform:uppercase; }
+  .motor-params { display:flex; gap:14px; margin-top:8px; font-family:var(--mono); font-size:10px; color:var(--ink-dim); }
+  .motor-params label { display:inline-flex; align-items:center; gap:5px; }
+  .motor-params input { width:54px; background:var(--bg); border:1px solid var(--line-bright); color:var(--ink);
+    font-family:var(--mono); font-size:11px; padding:3px 6px; outline:none; }
+  .motor-params input:focus { border-color:var(--cool); }
 
   .eta-chart { width:100%; height:110px; }
   .eta-stats { display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; margin-top:8px; }
@@ -196,6 +207,13 @@
           <input id="scrub" type="range" min="0" max="120" step="1" value="0" />
           <div class="t" id="scrubLabel">T+0h</div>
           <button class="sbtn active" id="windBtn" title="Toggle live wind field">WIND</button>
+          <button class="sbtn" id="fleetBtn" title="Show all ensemble member routes">FLEET</button>
+        </div>
+        <div class="legend" id="routeLegend" style="display:none">
+          <span class="li"><i style="background:#4ecdc4"></i>P5 fast</span>
+          <span class="li"><i style="background:#f4f7fc"></i>P50 median</span>
+          <span class="li"><i style="background:#e94560"></i>P95 slow</span>
+          <span class="li"><i class="dash"></i>motoring</span>
         </div>
         <div class="loader" id="loader">
           <div class="ring"></div>
@@ -243,6 +261,18 @@
       </div>
 
       <div>
+        <p class="section-label">Motoring</p>
+        <button id="motorToggle" class="toggle-btn active">
+          <span class="dot"></span><span class="label">Engine <strong id="motorState">ON</strong></span>
+          <span class="meta">when sailing stalls</span>
+        </button>
+        <div class="motor-params">
+          <label>Motor <input id="motorKt" type="number" min="2" max="12" step="0.5" /> kt</label>
+          <label>Min VMG <input id="motorThresh" type="number" min="1" max="8" step="0.5" /> kt</label>
+        </div>
+      </div>
+
+      <div>
         <p class="section-label">Arrival distribution</p>
         <svg class="eta-chart" id="etaChart" viewBox="0 0 320 110" preserveAspectRatio="none"></svg>
         <div class="eta-stats">
@@ -261,6 +291,8 @@
           <div class="risk"><div class="label">P(≤4 days)</div><div class="v ok" id="pArrive">—</div><div class="x">fast arrival</div></div>
           <div class="risk"><div class="label">Max favorable curr</div><div class="v ok" id="maxFav">—</div><div class="x">Gulf Stream help</div></div>
           <div class="risk"><div class="label">Max adverse curr</div><div class="v hot" id="maxAdv">—</div><div class="x">current hindrance</div></div>
+          <div class="risk"><div class="label">Engine hours</div><div class="v" id="engHours">—</div><div class="x">P50 member</div></div>
+          <div class="risk"><div class="label">Motoring</div><div class="v" id="engPct">—</div><div class="x">of passage time</div></div>
         </div>
       </div>
     </aside>
@@ -271,6 +303,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/cesium/1.124.0/Cesium.js"></script>
 <script src="lib/vessel.js"></script>
 <script src="lib/router.js"></script>
+<script src="lib/landmask.js"></script>
 <script>
 // ════════════════════ Cesium views (all on Google 3D Tiles) ════════════════════
 const rootUrl = window.meridian?.tiles?.rootUrl || "/api/3dtiles/v1/3dtiles/root.json";
@@ -348,6 +381,58 @@ function computeSamples(){ const n=6,out=[];
   return out; }
 let WIND_SAMPLES=computeSamples();
 const MAX_HOURS=240, ARRIVAL_TOL_NM=5;
+
+// Motoring settings (PredictWind-style threshold model), persisted.
+function loadMotoring(){
+  try{ const s=localStorage.getItem('meridian.motoring'); if(s){ const m=JSON.parse(s);
+    if(m&&typeof m.enabled==='boolean'&&Number.isFinite(m.motorKt)&&Number.isFinite(m.thresholdKt)) return m; } }catch(e){}
+  return { enabled:true, motorKt:6.5, thresholdKt:4 };
+}
+let MOTORING=loadMotoring();
+function saveMotoring(){ try{ localStorage.setItem('meridian.motoring',JSON.stringify(MOTORING)); }catch(e){} }
+
+// Coastline mask + per-route water anchors (geocoded ports sit ON land).
+const landPromise=window.LandMask?window.LandMask.load():Promise.resolve(false);
+let depAnchor=null,arrAnchor=null,activeLandGuard=null;
+function makeLandGuard(a1,a2,raster){
+  const L=window.LandMask; if(!L||!L.isReady())return null;
+  const segClear=raster?raster.segmentClear:L.segmentClear;
+  return (p1,p2)=>{
+    if(segClear(p1,p2))return true;
+    // Harbor exemption: legs touching an anchor get their near-anchor 2.5 nm
+    // stub trimmed off and retested, so boats can reach the dock area without
+    // licensing a full leg across land.
+    for(const a of [a1,a2]){
+      const d1=gcDistance(p1,a),d2=gcDistance(p2,a);
+      if(d1<2||d2<2){
+        const d=gcDistance(p1,p2); if(d<=2.6)return true;
+        let q1=p1,q2=p2;
+        if(d2<2){ const f=Math.max(0,1-2.5/d); q2={lat:p1.lat+(p2.lat-p1.lat)*f,lon:p1.lon+(p2.lon-p1.lon)*f}; }
+        if(d1<2){ const f=Math.min(1,2.5/d); q1={lat:p1.lat+(p2.lat-p1.lat)*f,lon:p1.lon+(p2.lon-p1.lon)*f}; }
+        return segClear(q1,q2);
+      }
+    }
+    return false;
+  };
+}
+async function refreshLandAnchors(loaderSub){
+  if(loaderSub)loaderSub.textContent='Loading coastline mask';
+  try{ await Promise.race([landPromise,new Promise(r=>setTimeout(r,20000))]); }catch(e){}
+  const L=window.LandMask;
+  if(L&&L.isReady()){
+    // Rasterize the corridor (route bbox + margin for isochrone spread) so the
+    // router's land tests are array lookups instead of polygon ray-casts.
+    const s=Math.max(-85,Math.min(START.lat,DEST.lat)-3.5), n=Math.min(85,Math.max(START.lat,DEST.lat)+3.5);
+    const w=Math.min(START.lon,DEST.lon)-4, e=Math.max(START.lon,DEST.lon)+4;
+    const raster=await L.buildRaster(w,s,e,n,0.02,(f)=>{ if(loaderSub)loaderSub.textContent=`Coastline raster · ${Math.round(f*100)}%`; });
+    // Anchors snap to water in the DILATED raster, so approaches stay legal.
+    depAnchor=raster.nearestWater(START.lat,START.lon,15)||{lat:START.lat,lon:START.lon};
+    arrAnchor=raster.nearestWater(DEST.lat,DEST.lon,15)||{lat:DEST.lat,lon:DEST.lon};
+    activeLandGuard=makeLandGuard(depAnchor,arrAnchor,raster);
+  }else{
+    depAnchor={lat:START.lat,lon:START.lon}; arrAnchor={lat:DEST.lat,lon:DEST.lon}; activeLandGuard=null;
+  }
+}
 
 // Active vessel = whatever was chosen in the Setup view (shared store).
 const VESSEL = (window.Vessel ? window.Vessel.get() : null);
@@ -443,31 +528,62 @@ function medianRoute(routes){
   if(arrived.length) return arrived[Math.floor(arrived.length/2)];
   return routes.slice().sort((a,b)=>a.finalDistance-b.finalDistance)[0]||null;
 }
+// Representative members — the ACTUAL P5/P50/P95 sailed routes, not a synthetic
+// per-progress average (which zig-zagged through the fleet and corresponded to
+// no sailable track). This mirrors how commercial routers present results: a
+// few real routes + spread stats, never raw ensemble spaghetti.
+function repRoutes(routes){
+  const arrived=routes.filter(r=>r.arrived).sort((a,b)=>a.etaHours-b.etaHours);
+  if(!arrived.length){ const c=medianRoute(routes); return c?[{r:c,key:'P50',hex:'#f4f7fc'}]:[]; }
+  const n=arrived.length;
+  const picks=[[Math.floor(0.05*(n-1)),'P5','#4ecdc4'],[Math.floor(0.5*(n-1)),'P50','#f4f7fc'],[Math.floor(0.95*(n-1)),'P95','#e94560']];
+  const seen=new Set(),out=[];
+  for(const [i,key,hex] of picks){ if(seen.has(i))continue; seen.add(i); out.push({r:arrived[i],key,hex}); }
+  return out;
+}
+// One route as solid (sail) / dashed (motoring) leg runs.
+function addSegmentedRoute(route,hex,width){
+  let runs=[],cur=null;
+  for(let i=1;i<route.path.length;i++){
+    const a=route.path[i-1],b=route.path[i],m=!!b.motor;
+    if(!cur||cur.motor!==m){ cur={motor:m,pts:[a.lon,a.lat]}; runs.push(cur); }
+    cur.pts.push(b.lon,b.lat);
+  }
+  for(const run of runs){
+    if(run.pts.length<4||!run.pts.every(Number.isFinite))continue;
+    const positions=Cesium.Cartesian3.fromDegreesArray(run.pts);
+    if(run.motor){
+      routeEntities.push(mainViewer.entities.add({ polyline:{ positions, width:Math.max(2,width-1),
+        material:new Cesium.PolylineDashMaterialProperty({color:colorA(hex,0.95),dashLength:10}),
+        depthFailMaterial:colorA(hex,0.4), arcType:Cesium.ArcType.GEODESIC } }));
+    }else{
+      routeEntities.push(mainViewer.entities.add({ polyline:{ positions, width,
+        material:colorA(hex,0.95), depthFailMaterial:colorA(hex,0.5), arcType:Cesium.ArcType.GEODESIC } }));
+    }
+  }
+}
+let fleetEntities=[],fleetShown=false;
 function renderRoutes3D(routes,envelope){
-  clearRoutes();
+  clearRoutes(); fleetEntities=[];
+  // Full fleet as a faint density layer, hidden behind the FLEET toggle.
   const etaColor=buildEtaColor(routes);
-  // depthFailMaterial → routes stay visible even where Google tiles would occlude them.
   for(const r of routes){ const flat=[]; for(const p of r.path){ flat.push(p.lon,p.lat); } if(flat.length<4)continue;
-    const col=etaColor(r,0.55);
-    routeEntities.push(mainViewer.entities.add({ polyline:{ positions:Cesium.Cartesian3.fromDegreesArray(flat), width:2, material:col, depthFailMaterial:col, arcType:Cesium.ArcType.GEODESIC } })); }
-  // Envelope as dashed 5%/95% boundary lines — the old filled polygon bowtied
-  // (self-intersected) whenever the corridor bent, which read as broken shading,
-  // and a single NaN vertex killed the whole render loop.
+    const col=etaColor(r,0.13);
+    const ent=mainViewer.entities.add({ show:fleetShown, polyline:{ positions:Cesium.Cartesian3.fromDegreesArray(flat), width:1.5, material:col, depthFailMaterial:col, arcType:Cesium.ArcType.GEODESIC } });
+    routeEntities.push(ent); fleetEntities.push(ent); }
+  // Dashed 5%/95% envelope boundary lines (statistical corridor, kept subtle).
   const e5=[],e95=[];
   for(const e of envelope){ if([e.lon50,e.lat5,e.lat95].every(Number.isFinite)){ e5.push(e.lon50,e.lat5); e95.push(e.lon50,e.lat95); } }
-  const dash=new Cesium.PolylineDashMaterialProperty({ color:colorA("#f9a826",0.85), dashLength:14 });
+  const dash=new Cesium.PolylineDashMaterialProperty({ color:colorA("#f9a826",0.5), dashLength:14 });
   for(const band of [e5,e95]){ if(band.length>=4)
-    routeEntities.push(mainViewer.entities.add({ polyline:{ positions:Cesium.Cartesian3.fromDegreesArray(band), width:1.6, material:dash, depthFailMaterial:colorA("#f9a826",0.4), arcType:Cesium.ArcType.GEODESIC } })); }
-  const med=[]; for(const e of envelope){ if(Number.isFinite(e.lon50)&&Number.isFinite(e.lat50))med.push(e.lon50,e.lat50); }
-  if(med.length>=4){
-    // glow + core for the median so it reads at corridor scale
-    routeEntities.push(mainViewer.entities.add({ polyline:{ positions:Cesium.Cartesian3.fromDegreesArray(med), width:9, material:colorA("#f4f7fc",0.35), depthFailMaterial:colorA("#f4f7fc",0.3), arcType:Cesium.ArcType.GEODESIC } }));
-    routeEntities.push(mainViewer.entities.add({ polyline:{ positions:Cesium.Cartesian3.fromDegreesArray(med), width:3, material:colorA("#ffffff",1.0), depthFailMaterial:colorA("#ffffff",0.9), arcType:Cesium.ArcType.GEODESIC } }));
-  }
-  // 24h time ticks along the median-ETA member's optimal route
-  const mr=medianRoute(routes);
-  if(mr&&mr.path.length>2){ const end=mr.path[mr.path.length-1].time;
-    for(let h=24;h<end;h+=24){ const p=posAt(mr.path,h);
+    routeEntities.push(mainViewer.entities.add({ polyline:{ positions:Cesium.Cartesian3.fromDegreesArray(band), width:1.4, material:dash, depthFailMaterial:colorA("#f9a826",0.25), arcType:Cesium.ArcType.GEODESIC } })); }
+  // The three representative real routes (solid sail / dashed motor legs).
+  const reps=repRoutes(routes);
+  for(const rep of reps) addSegmentedRoute(rep.r, rep.hex, rep.key==='P50'?4:2.8);
+  // 24h time ticks along the P50 route
+  const p50=reps.find(x=>x.key==='P50');
+  if(p50&&p50.r.path.length>2){ const end=p50.r.path[p50.r.path.length-1].time;
+    for(let h=24;h<end;h+=24){ const p=posAt(p50.r.path,h);
       routeEntities.push(mainViewer.entities.add({ position:Cesium.Cartesian3.fromDegrees(p.lon,p.lat,0),
         point:{pixelSize:5,color:colorA("#f4f7fc",0.95),outlineColor:colorA("#0a0f18",0.9),outlineWidth:1,disableDepthTestDistance:Number.POSITIVE_INFINITY},
         label:{text:(h/24)+'d',font:"10px Fira Code, monospace",fillColor:colorA("#9ba8bd",0.95),pixelOffset:new Cesium.Cartesian2(8,-6),disableDepthTestDistance:Number.POSITIVE_INFINITY} })); } }
@@ -476,6 +592,7 @@ function renderRoutes3D(routes,envelope){
     label:{text:txt,font:"11px Fira Code, monospace",fillColor:Cesium.Color.fromCssColorString(hex),pixelOffset:new Cesium.Cartesian2(10,-8),disableDepthTestDistance:Number.POSITIVE_INFINITY} });
   const shortName=(p)=>String(p.name||'').split(',')[0].toUpperCase()||'PORT';
   routeEntities.push(mk(START,"#4ecdc4",shortName(START)+" · DEP")); routeEntities.push(mk(DEST,"#e94560",shortName(DEST)+" · ARR"));
+  document.getElementById('routeLegend').style.display='flex';
 }
 
 // ════════════════════ passage playback (time scrubber) ════════════════════
@@ -485,9 +602,9 @@ function posAt(path,t){
   if(t<=path[0].time)return {lat:path[0].lat,lon:path[0].lon,sog:0,tws:path[0].tws||0};
   for(let i=1;i<path.length;i++){
     if(path[i].time>=t){ const a=path[i-1],b=path[i],dt=b.time-a.time||1,f=(t-a.time)/dt;
-      return { lat:a.lat+(b.lat-a.lat)*f, lon:a.lon+(b.lon-a.lon)*f, sog:gcDistance(a,b)/dt, tws:b.tws||0 }; } }
+      return { lat:a.lat+(b.lat-a.lat)*f, lon:a.lon+(b.lon-a.lon)*f, sog:gcDistance(a,b)/dt, tws:b.tws||0, motor:!!b.motor }; } }
   const last=path[path.length-1];
-  return {lat:last.lat,lon:last.lon,sog:0,tws:last.tws||0,done:true};
+  return {lat:last.lat,lon:last.lon,sog:0,tws:last.tws||0,motor:false,done:true};
 }
 
 let scrubH=0,maxScrubH=120,playing=false,lastFrameTs=null;
@@ -541,8 +658,9 @@ function updateScrub(){
     fleetMeta.medianPoint.position=Cesium.Cartesian3.fromDegrees(p.lon,p.lat,50);
     fleetMeta.medianLabel.position=Cesium.Cartesian3.fromDegrees(p.lon,p.lat,50);
     const dtg=gcDistance(p,DEST);
-    fleetMeta.medianLabel.text=done?'MEDIAN · ARRIVED':`MEDIAN · ${p.sog.toFixed(1)} kt`;
-    medInfo=done?' · median arrived':` · median ${p.sog.toFixed(1)} kt · ${Math.round(dtg)} nm to go`;
+    const eng=p.motor?' ⚙':'';
+    fleetMeta.medianLabel.text=done?'MEDIAN · ARRIVED':`MEDIAN · ${p.sog.toFixed(1)} kt${eng}`;
+    medInfo=done?' · median arrived':` · median ${p.sog.toFixed(1)} kt${p.motor?' ⚙ motor':''} · ${Math.round(dtg)} nm to go`;
   }
   updateWindReadouts(medPos);
   const when=forecastIssueDate?hoursToETA(forecastIssueDate,scrubH+depOffsetHours):'—';
@@ -666,12 +784,16 @@ function updatePanel(routes,envelope,prunedCount){
   set('pArrive',(arrived.filter(r=>r.etaHours<=96).length/routes.length*100).toFixed(0)+'%');
   const maxFav=Math.max(...routes.map(r=>r.maxFavorableCurrent||0)),maxAdv=Math.max(...routes.map(r=>r.maxAdverseCurrent||0));
   set('maxFav',useCurrents?'+'+maxFav.toFixed(1)+' kt':'— off'); set('maxAdv',useCurrents?'−'+maxAdv.toFixed(1)+' kt':'— off');
+  const mrM=medianRoute(routes);
+  set('engHours',MOTORING.enabled&&mrM?(mrM.engineHours||0).toFixed(0)+' h':'— off');
+  set('engPct',MOTORING.enabled&&mrM?Math.round((mrM.pctMotor||0)*100)+'%':'— off');
   const mid=envelope[Math.floor(envelope.length/2)]; set('spreadMid','±'+Math.round((mid.lat95-mid.lat5)*60/2)+' nm');
   updateEtaNowLine();
 }
 function makeEnv(){
   return { windResults:currentWindResults, currentResults:marineResults, useCurrents, depOffsetHours,
-    vessel:VESSEL, start:START, dest:DEST, maxHours:MAX_HOURS, arrivalTolNm:ARRIVAL_TOL_NM };
+    vessel:VESSEL, start:depAnchor||START, dest:arrAnchor||DEST, maxHours:MAX_HOURS, arrivalTolNm:ARRIVAL_TOL_NM,
+    motoring:MOTORING, landGuard:activeLandGuard };
 }
 let rerouting=false,rerouteQueued=false;
 async function rerouteAndRender(){
@@ -745,6 +867,8 @@ async function loadLiveAndRoute(){
     const MON=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
     const fd=forecastIssueDate;
     document.getElementById('forecastIssue').textContent=`${fd.getUTCDate()} ${MON[fd.getUTCMonth()]} ${fd.getUTCFullYear()}`;
+    loaderText.textContent='Preparing coastline mask';
+    await refreshLandAnchors(loaderSub);
     loaderText.textContent=`Isochrone routing · ${members.length} members`;
     const routes=await window.Router.routeFleet(members,makeEnv(),(i,n)=>{ loaderSub.textContent=`Optimal route · member ${i}/${n}`; loaderBar.style.width=(70+i/n*30)+'%'; });
     lastRoutes=routes;
@@ -752,7 +876,8 @@ async function loadLiveAndRoute(){
     const envelope=computeEnvelope(kept);
     renderRoutes3D(kept,envelope); updatePanel(kept,envelope,routes.length-kept.length); buildScrubber(kept);
     document.getElementById('liveStamp').className='live';
-    document.getElementById('liveStamp').textContent=`Live · ${fd.getUTCDate()} ${MON[fd.getUTCMonth()]} ${String(fd.getUTCHours()).padStart(2,'0')}Z`;
+    const maskNote=(window.LandMask&&window.LandMask.isReady())?'':' · boxes-only mask';
+    document.getElementById('liveStamp').textContent=`Live · ${fd.getUTCDate()} ${MON[fd.getUTCMonth()]} ${String(fd.getUTCHours()).padStart(2,'0')}Z${maskNote}`;
     renderBoatList(); updateDepClock();
     const cBtn=document.getElementById('currentsToggle'),cState=document.getElementById('currentsState'),cSrc=document.getElementById('currentsSource');
     if(currentsAvail===0){ cBtn.classList.remove('active'); cBtn.disabled=true; cState.textContent='UNAVAIL'; cSrc.textContent='No data'; cBtn.onclick=null; }
@@ -885,6 +1010,22 @@ async function main(){
   document.getElementById('playBtn').addEventListener('click',()=>setPlaying(!playing));
   document.getElementById('windBtn').addEventListener('click',()=>{ windShown=!windShown; if(windPLC)windPLC.show=windShown;
     document.getElementById('windBtn').classList.toggle('active',windShown); });
+  document.getElementById('fleetBtn').addEventListener('click',()=>{ fleetShown=!fleetShown;
+    for(const ent of fleetEntities)ent.show=fleetShown;
+    document.getElementById('fleetBtn').classList.toggle('active',fleetShown); });
+  // motoring controls
+  const mBtn=document.getElementById('motorToggle'),mState=document.getElementById('motorState');
+  const mKt=document.getElementById('motorKt'),mTh=document.getElementById('motorThresh');
+  const syncMotorUi=()=>{ mBtn.classList.toggle('active',MOTORING.enabled); mState.textContent=MOTORING.enabled?'ON':'OFF';
+    mKt.value=MOTORING.motorKt; mTh.value=MOTORING.thresholdKt; mKt.disabled=mTh.disabled=!MOTORING.enabled; };
+  syncMotorUi();
+  mBtn.addEventListener('click',()=>{ MOTORING.enabled=!MOTORING.enabled; saveMotoring(); syncMotorUi(); rerouteAndRender(); });
+  let mDeb=null;
+  const onParam=()=>{ const kt=parseFloat(mKt.value),th=parseFloat(mTh.value);
+    if(Number.isFinite(kt)&&kt>=2&&kt<=12)MOTORING.motorKt=kt;
+    if(Number.isFinite(th)&&th>=1&&th<=8)MOTORING.thresholdKt=th;
+    saveMotoring(); if(mDeb)clearTimeout(mDeb); mDeb=setTimeout(rerouteAndRender,400); };
+  mKt.addEventListener('change',onParam); mTh.addEventListener('change',onParam);
   bindPortSearch();
 
   await loadLiveAndRoute();
@@ -897,7 +1038,8 @@ window.m = { Cesium, mainViewer, depViewer, arrViewer, reroute:rerouteAndRender,
   play:()=>setPlaying(true), pause:()=>setPlaying(false),
   state:()=>({ routes:lastRoutes?lastRoutes.length:0, arrived:lastRoutes?lastRoutes.filter(r=>r.arrived).length:0,
     scrubH, maxScrubH, playing, windGrid:windGrid?windGrid.length:0, depOffsetHours, useCurrents,
-    dep:START.name, arr:DEST.name }),
+    dep:START.name, arr:DEST.name, motoring:MOTORING, landMask:window.LandMask?window.LandMask.isReady():false,
+    depAnchor, arrAnchor }),
   flyMain:(lon,lat,h,p=-90)=>mainViewer.camera.setView({destination:Cesium.Cartesian3.fromDegrees(lon,lat,h),orientation:{heading:0,pitch:Cesium.Math.toRadians(p),roll:0}}) };
 console.log("[routing] control hooks ready: window.m");
 main();
