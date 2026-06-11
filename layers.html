@@ -253,7 +253,7 @@ function fieldGridForView() {
   const padLat = (b.getNorth() - b.getSouth()) * 0.25, padLon = (b.getEast() - b.getWest()) * 0.25;
   return W.makeGrid(
     Math.max(-80, b.getSouth() - padLat), Math.min(80, b.getNorth() + padLat),
-    b.getWest() - padLon, b.getEast() + padLon, 7, 6);
+    b.getWest() - padLon, b.getEast() + padLon, 10, 8);
 }
 
 function setStamp(cls, txt) { const el = $("liveStamp"); el.className = "live " + cls; el.textContent = txt; }
@@ -390,7 +390,7 @@ function flowInit() {
   if (flow || !window.FlowField) return;
   flow = new FlowField($("flowCanvas"));
   flowWind = flow.addLayer({
-    numParticles: 6500, maxSpeed: 33, minSpeed: 0.2,
+    numParticles: 11000, maxSpeed: 33, minSpeed: 0.2,
     // warm-only ramp: NO blue/cool tones — blue is current's identity, and a
     // blue-gray low end made slow wind over land read as "current on land".
     colorStops: [
@@ -399,7 +399,7 @@ function flowInit() {
     heatmapOpacity: gustOn ? 0.30 : 0, fadeOpacity: 0.972, pointSize: 1.7, dropRate: 0.002, dropRateBump: 0.008,
   });
   flowCur = flow.addLayer({
-    numParticles: 4000, maxSpeed: 4, minSpeed: 0.05,
+    numParticles: 6000, maxSpeed: 4, minSpeed: 0.05,
     colorStops: [
       { stop: 0.0, color: "rgba(58,90,140,0.8)" }, { stop: 0.5, color: "#4fa3ff" }, { stop: 1.0, color: "#9ad7ff" }],
     // faster baseline drop: particles that bilinear-leak onto zeroed land
