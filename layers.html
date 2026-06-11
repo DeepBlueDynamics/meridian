@@ -122,7 +122,9 @@
   <main>
     <div class="pane">
       <div id="map"></div>
-      <div class="tag"><b>Forecast fields</b> · wind white · current blue ×7 · no arrowheads</div>
+      <!-- transparent particle-flow overlay (FLOW mode); never intercepts the map -->
+      <canvas id="flowCanvas" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:2;display:none;"></canvas>
+      <div class="tag" id="paneTag"><b>Forecast fields</b> · wind white · current blue ×7 · no arrowheads</div>
 
       <div class="navdata" id="navdata">
         <div class="h">Cursor</div>
@@ -150,9 +152,14 @@
     <div class="panel">
       <div>
         <p class="section-label">Layers</p>
+        <div class="seg" id="vizSeg" style="margin-bottom:8px">
+          <button data-viz="flow" title="Animated particle streamlines (Windy-style)">FLOW</button>
+          <button data-viz="lines" title="Static line convention with speed labels">LINES</button>
+        </div>
         <button class="toggle-btn wind active" id="windToggle"><span class="dot"></span>Wind <strong id="windState">ON</strong><span class="meta" id="windMeta">—</span></button>
         <button class="toggle-btn cur active" id="curToggle"><span class="dot"></span>Current <strong id="curState">ON</strong><span class="meta" id="curMeta">—</span></button>
         <button class="toggle-btn lbl active" id="lblToggle"><span class="dot"></span>Speed labels <strong id="lblState">ON</strong></button>
+        <button class="toggle-btn wind active" id="gustToggle"><span class="dot"></span>Gust shading <strong id="gustState">ON</strong><span class="meta">flow mode</span></button>
       </div>
 
       <div>
@@ -201,6 +208,7 @@
 <script src="https://unpkg.com/deck.gl@9.0.36/dist.min.js"></script>
 <script src="lib/landmask.js"></script>
 <script src="lib/field.js"></script>
+<script src="lib/flow-field.js"></script>
 <script src="lib/fieldlayer.js"></script>
 <script>
 (async function () {
@@ -298,7 +306,7 @@ function finishFields(cached) {
   $("windMeta").textContent = windField.p5 ? "ens p50" : "det";
   $("curMeta").textContent = "SMOC";
   if (!cached) setStamp("", "Live · Open-Meteo");
-  resample(); render(); tickAge();
+  flowInvalidate(); resample(); render(); tickAge();
 }
 
 // forecast-age indicator (spec §8): ok < 6 h, warn < 24 h, hot beyond
@@ -354,17 +362,98 @@ function render() {
   if (!windField || !curField) return;
   const zoom = map.getZoom();
   const layers = [];
-  if (showCur) {            // current beneath wind so shared anchors read wind-on-top
-    const cd = FL.lineData(curField, waterSamples, tFor(curField), zoom, W);
-    layers.push(...FL.makeDeckLayers(deck, curField, cd, { labels: showLbl }));
+  if (vizMode !== "flow") {  // line convention; in FLOW mode particles carry it
+    if (showCur) {           // current beneath wind so shared anchors read wind-on-top
+      const cd = FL.lineData(curField, waterSamples, tFor(curField), zoom, W);
+      layers.push(...FL.makeDeckLayers(deck, curField, cd, { labels: showLbl }));
+    }
+    if (showWind) {
+      const wd = FL.lineData(windField, samples, tFor(windField), zoom, W);
+      layers.push(...FL.makeDeckLayers(deck, windField, wd, { labels: showLbl }));
+    }
   }
-  if (showWind) {
-    const wd = FL.lineData(windField, samples, tFor(windField), zoom, W);
-    layers.push(...FL.makeDeckLayers(deck, windField, wd, { labels: showLbl }));
-  }
-  layers.push(...skLayers());
+  layers.push(...skLayers()); // measured-at-boat stays in BOTH modes (cyan)
   overlay.setProps({ layers });
+  flowUpdate();
   updateScrubLabel();
+}
+
+// ── FLOW mode: GPU particle advection (engine from the windcurrentviz drop) ──
+// Particles move "where it's going" (wind) / "where it sets" (current) by
+// construction; warm ramp = wind, blue ramp = current, cyan stays reserved
+// for measured/live. Field rectangles are re-windowed to the padded viewport
+// (linear lat/lon — small Mercator mismatch accepted at these spans).
+let flow = null, flowWind = null, flowCur = null;
+let vizMode = store.get("vizmode", "flow"), gustOn = store.get("gust", true);
+let flowWindHour = -1, flowCurHour = -1;
+function flowInit() {
+  if (flow || !window.FlowField) return;
+  flow = new FlowField($("flowCanvas"));
+  flowWind = flow.addLayer({
+    numParticles: 14000, maxSpeed: 33,
+    colorStops: [
+      { stop: 0.0, color: "rgba(125,140,160,0.85)" }, { stop: 0.30, color: "#9ba8bd" },
+      { stop: 0.55, color: "#f0e468" }, { stop: 0.78, color: "#f9a826" }, { stop: 1.0, color: "#e94560" }],
+    heatmapOpacity: gustOn ? 0.30 : 0, fadeOpacity: 0.972, pointSize: 1.7, dropRate: 0.002, dropRateBump: 0.008,
+  });
+  flowCur = flow.addLayer({
+    numParticles: 9000, maxSpeed: 2.4,
+    colorStops: [
+      { stop: 0.0, color: "rgba(58,90,140,0.8)" }, { stop: 0.5, color: "#4fa3ff" }, { stop: 1.0, color: "#9ad7ff" }],
+    heatmapOpacity: 0, fadeOpacity: 0.985, pointSize: 1.5,
+  });
+  flow.start();
+}
+function flowBounds() {
+  const b = map.getBounds();
+  return [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()];
+}
+// Re-window one Field timestep onto a view-aligned grid (row 0 = NORTH, as
+// the engine expects; our Field grids are south-up). u/v in knots, "going".
+function prepFlowField(field, h, kind, bounds) {
+  const NW = 64, NH = 40;
+  const [lonW, latS, lonE, latN] = bounds;
+  const u = new Float32Array(NW * NH), v = new Float32Array(NW * NH);
+  const LM = window.LandMask, maskLand = kind === "cur" && LM && LM.isReady && LM.isReady();
+  for (let r = 0; r < NH; r++) {
+    const lat = latN - (r / (NH - 1)) * (latN - latS);
+    for (let c = 0; c < NW; c++) {
+      const lon = lonW + (c / (NW - 1)) * (lonE - lonW);
+      let uu = 0, vv = 0;
+      const s = W.sample(field, lat, lon, h);
+      if (s && !(maskLand && LM.pointOnLand(lat, lon))) {
+        const rad = s.dir * Math.PI / 180;
+        if (kind === "wind") { uu = -s.speed * Math.sin(rad); vv = -s.speed * Math.cos(rad); } // FROM → going
+        else { uu = s.speed * Math.sin(rad); vv = s.speed * Math.cos(rad); }                   // sets TO
+      }
+      u[r * NW + c] = uu; v[r * NW + c] = vv;
+    }
+  }
+  return { width: NW, height: NH, u, v, bounds };
+}
+function flowInvalidate() { flowWindHour = -1; flowCurHour = -1; }
+function flowUpdate() {
+  const on = vizMode === "flow" && windField && curField;
+  $("flowCanvas").style.display = on ? "" : "none";
+  if (!on) { if (flow) flow.stop(); return; }
+  flowInit(); if (!flow) return;
+  flow.start();
+  const bounds = flowBounds();
+  flowWind.enabled = showWind; flowCur.enabled = showCur;
+  const tw = Math.max(0, Math.min(windField.times.length - 1, tFor(windField)));
+  const w0 = Math.floor(tw), w1 = Math.min(windField.times.length - 1, w0 + 1);
+  if (w0 !== flowWindHour) {
+    flowWindHour = w0;
+    flowWind.setFields(prepFlowField(windField, w0, "wind", bounds), prepFlowField(windField, w1, "wind", bounds));
+  }
+  flowWind.setFieldMix(tw - w0);
+  const tc = Math.max(0, Math.min(curField.times.length - 1, tFor(curField)));
+  const c0 = Math.floor(tc), c1 = Math.min(curField.times.length - 1, c0 + 1);
+  if (c0 !== flowCurHour) {
+    flowCurHour = c0;
+    flowCur.setFields(prepFlowField(curField, c0, "cur", bounds), prepFlowField(curField, c1, "cur", bounds));
+  }
+  flowCur.setFieldMix(tc - c0);
 }
 
 function updateScrubLabel() {
@@ -376,8 +465,9 @@ function updateScrubLabel() {
 }
 
 map.on("load", () => { resample(); render(); });
-map.on("moveend", () => { resample(); render(); store.set("view", { center: [map.getCenter().lng, map.getCenter().lat], zoom: map.getZoom() }); });
-map.on("resize", () => { resample(); render(); });
+map.on("movestart", () => { $("flowCanvas").style.opacity = "0.12"; }); // Windy-style fade during drag
+map.on("moveend", () => { $("flowCanvas").style.opacity = ""; flowInvalidate(); resample(); render(); store.set("view", { center: [map.getCenter().lng, map.getCenter().lat], zoom: map.getZoom() }); });
+map.on("resize", () => { if (flow) flow.resize(); flowInvalidate(); resample(); render(); });
 
 // ── timeline (spec §6) ────────────────────────────────────────────────────
 function setPlay(on) {
@@ -410,6 +500,21 @@ function bindToggle(btn, stateEl, get, set) {
 bindToggle("windToggle", "windState", () => showWind, v => { showWind = v; store.set("wind", v); });
 bindToggle("curToggle", "curState", () => showCur, v => { showCur = v; store.set("cur", v); });
 bindToggle("lblToggle", "lblState", () => showLbl, v => { showLbl = v; store.set("labels", v); });
+bindToggle("gustToggle", "gustState", () => gustOn, v => { gustOn = v; store.set("gust", v);
+  if (flowWind) flowWind.heatmapOpacity = v ? 0.30 : 0; });
+
+// ── FLOW / LINES mode segment ─────────────────────────────────────────────
+function applyVizMode() {
+  for (const x of $("vizSeg").querySelectorAll("button")) x.classList.toggle("active", x.dataset.viz === vizMode);
+  $("paneTag").innerHTML = vizMode === "flow"
+    ? "<b>Forecast fields</b> · particles drift with the flow · warm wind · blue current"
+    : "<b>Forecast fields</b> · wind white · current blue ×7 · no arrowheads";
+  render();
+}
+for (const b of $("vizSeg").querySelectorAll("button")) {
+  b.onclick = () => { vizMode = b.dataset.viz; store.set("vizmode", vizMode); flowInvalidate(); applyVizMode(); };
+}
+applyVizMode();
 
 // ── region / source controls ──────────────────────────────────────────────
 for (const b of $("modeSeg").querySelectorAll("button")) {
