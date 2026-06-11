@@ -177,10 +177,11 @@ const createWindow = () => {
     console.log(`[RENDERER] ${message} (${src}:${line})`);
   });
   mainWin = win;
-  // Start on the Vessel Setup view; nav links toggle to routing/harbor at runtime.
-  // MERIDIAN_VIEW=routing|harbor changes the start page.
+  // Start on the Vessel Setup view; nav links toggle to routing/layers/harbor at runtime.
+  // MERIDIAN_VIEW=routing|layers|harbor changes the start page.
   const v = process.env.MERIDIAN_VIEW;
-  const page = v === "harbor" ? "index.html" : v === "routing" ? "routing.html" : "setup.html";
+  const page = v === "harbor" ? "index.html" : v === "routing" ? "routing.html"
+             : v === "layers" ? "layers.html" : "setup.html";
   win.loadFile(path.join(__dirname, "..", page));
   win.focus();
   // DevTools off by default (set MERIDIAN_DEVTOOLS=1 to open it).

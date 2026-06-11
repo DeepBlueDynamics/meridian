@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>MERIDIAN — Wind &amp; Current Layers</title>
+<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Public+Sans:wght@300;400;500;600;700&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg:#0a0f18; --bg-2:#131a26; --line:#1f2a3d; --line-bright:#324863;
+    --ink:#e8ecf3; --ink-dim:#9ba8bd; --ink-faint:#54627c; --ink-fade:#2a3548;
+    --member:#6b9dd9; --envelope:#f9a826; --mean:#f4f7fc;
+    --hot:#e94560; --cool:#4ecdc4; --warn:#ffb938; --cur:#4fa3ff;
+    --serif:'Instrument Serif',serif; --sans:'Public Sans',sans-serif; --mono:'Fira Code',monospace;
+  }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100vh; background:var(--bg); color:var(--ink); font-family:var(--sans); overflow:hidden; }
+  #app { display:grid; grid-template-rows:auto 1fr; height:100vh; }
+
+  header { padding:12px 22px; background:linear-gradient(180deg,#060a13,var(--bg)); border-bottom:1px solid var(--line);
+    display:flex; align-items:baseline; justify-content:space-between; gap:20px; }
+  .brand { display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
+  .brand .title { font-family:var(--serif); font-size:26px; color:var(--ink); letter-spacing:0.08em; }
+  .brand .subtitle { font-family:var(--mono); font-size:9px; letter-spacing:0.3em; display:flex; gap:6px; }
+  .brand .subtitle .deep { color:#fff; } .brand .subtitle .blue { color:var(--cur); } .brand .subtitle .dyn { color:var(--ink-dim); }
+  .brand .viewname { font-family:var(--mono); font-size:10px; letter-spacing:0.22em; color:var(--ink-faint); text-transform:uppercase;
+    border-left:1px solid var(--line-bright); padding-left:16px; }
+  .stamp { font-family:var(--mono); font-size:10px; color:var(--ink-faint); letter-spacing:0.15em; text-transform:uppercase; display:flex; gap:10px; align-items:center; }
+  .stamp .nv { color:var(--ink-dim); text-decoration:none; border:1px solid var(--line-bright); padding:4px 9px; border-radius:3px; letter-spacing:0.12em; }
+  .stamp .nv:hover { color:var(--ink); } .stamp .nv.active { color:var(--ink); border-color:var(--ink-dim); }
+  .stamp .live { padding:4px 9px; border-radius:3px; border:1px solid var(--cool); color:var(--cool); }
+  .stamp .live.cached { border-color:var(--warn); color:var(--warn); }
+  .stamp .live.offline { border-color:var(--hot); color:var(--hot); }
+
+  main { display:grid; grid-template-columns:1fr 332px; min-height:0; }
+  .pane { position:relative; border-right:1px solid var(--line); min-height:0; }
+  #map { position:absolute; inset:0; }
+  .tag { position:absolute; top:10px; left:10px; z-index:5; font-family:var(--mono); font-size:10px; letter-spacing:0.1em;
+    color:var(--ink-dim); background:rgba(10,15,24,0.75); border:1px solid var(--line); padding:5px 10px; border-radius:3px; }
+  .tag b { color:var(--ink); font-weight:500; }
+
+  /* cursor interrogation (NavData) */
+  .navdata { position:absolute; top:10px; right:10px; z-index:5; min-width:218px;
+    background:rgba(10,15,24,0.82); border:1px solid var(--line-bright); border-radius:4px; padding:9px 12px;
+    font-family:var(--mono); font-size:11px; line-height:1.7; pointer-events:none; }
+  .navdata .h { font-size:9px; letter-spacing:0.25em; color:var(--ink-faint); text-transform:uppercase; margin-bottom:3px; }
+  .navdata .w { color:var(--mean); } .navdata .c { color:var(--cur); } .navdata .m { color:var(--ink-faint); }
+  .navdata .spread { color:var(--ink-faint); font-size:10px; }
+
+  /* timeline scrub bar */
+  .scrubbar { position:absolute; left:10px; right:10px; bottom:10px; z-index:5; display:flex; gap:10px; align-items:center;
+    background:rgba(10,15,24,0.82); border:1px solid var(--line-bright); border-radius:4px; padding:7px 12px; }
+  .sbtn { background:transparent; border:1px solid var(--line-bright); color:var(--ink-dim); font-family:var(--mono); font-size:11px;
+    padding:4px 10px; border-radius:3px; cursor:pointer; letter-spacing:0.08em; }
+  .sbtn:hover { color:var(--ink); } .sbtn.active { color:var(--cool); border-color:var(--cool); }
+  .scrubbar input[type=range] { flex:1; accent-color:var(--cool); }
+  .scrubbar .t { font-family:var(--mono); font-size:11px; color:var(--ink); min-width:178px; text-align:right; }
+  .scrubbar .t .sub { color:var(--ink-faint); }
+
+  /* right panel */
+  .panel { overflow-y:auto; padding:16px 18px 28px; display:flex; flex-direction:column; gap:18px; background:var(--bg); }
+  .section-label { font-family:var(--mono); font-size:9px; letter-spacing:0.3em; text-transform:uppercase; color:var(--ink-faint); margin:0 0 8px; }
+  .toggle-btn { display:flex; align-items:center; gap:9px; width:100%; padding:8px 11px; background:var(--bg-2); border:1px solid var(--line-bright);
+    border-radius:4px; color:var(--ink-dim); font-family:var(--mono); font-size:11px; cursor:pointer; letter-spacing:0.06em; margin-bottom:6px; }
+  .toggle-btn .dot { width:8px; height:8px; border-radius:50%; background:var(--ink-fade); flex:none; }
+  .toggle-btn.active { color:var(--ink); }
+  .toggle-btn.wind.active .dot { background:var(--mean); box-shadow:0 0 7px rgba(244,247,252,0.8); }
+  .toggle-btn.cur.active .dot { background:var(--cur); box-shadow:0 0 7px rgba(79,163,255,0.8); }
+  .toggle-btn.lbl.active .dot { background:var(--cool); }
+  .toggle-btn .meta { margin-left:auto; color:var(--ink-faint); font-size:9px; }
+  .legend-conv { border:1px solid var(--line); border-radius:4px; padding:10px 12px; font-family:var(--mono); font-size:10px;
+    color:var(--ink-dim); line-height:1.9; background:var(--bg-2); }
+  .legend-conv .sw { display:inline-block; width:26px; height:2px; vertical-align:middle; margin-right:8px; }
+  .legend-conv .note { color:var(--ink-faint); font-size:9px; letter-spacing:0.04em; }
+  .kv { display:grid; grid-template-columns:auto 1fr; gap:3px 12px; font-family:var(--mono); font-size:10.5px; }
+  .kv .k { color:var(--ink-faint); } .kv .v { color:var(--ink-dim); text-align:right; }
+  .kv .v.warn { color:var(--warn); } .kv .v.hot { color:var(--hot); } .kv .v.ok { color:var(--cool); }
+  .btn { width:100%; padding:8px 10px; background:transparent; border:1px solid var(--line-bright); border-radius:4px; color:var(--ink-dim);
+    font-family:var(--mono); font-size:10.5px; letter-spacing:0.1em; cursor:pointer; text-transform:uppercase; }
+  .btn:hover { color:var(--ink); border-color:var(--ink-dim); } .btn:disabled { opacity:0.45; cursor:default; }
+  .seg { display:flex; border:1px solid var(--line-bright); border-radius:4px; overflow:hidden; margin-bottom:8px; }
+  .seg button { flex:1; padding:6px 0; background:transparent; border:none; color:var(--ink-faint); font-family:var(--mono); font-size:10px;
+    letter-spacing:0.12em; cursor:pointer; }
+  .seg button.active { background:var(--ink-fade); color:var(--ink); }
+  .sk input { width:100%; padding:7px 9px; background:var(--bg-2); border:1px solid var(--line-bright); border-radius:4px; color:var(--ink);
+    font-family:var(--mono); font-size:11px; outline:none; margin-bottom:6px; }
+  .sk input:focus { border-color:var(--cool); }
+  .sk .state { font-family:var(--mono); font-size:9.5px; color:var(--ink-faint); letter-spacing:0.08em; line-height:1.7; }
+  .sk .state .on { color:var(--cool); }
+
+  /* loader */
+  .loader { position:absolute; inset:0; z-index:20; background:rgba(10,15,24,0.88); display:flex; flex-direction:column;
+    align-items:center; justify-content:center; }
+  .loader .ring { width:36px; height:36px; border:1px solid var(--ink-fade); border-top-color:var(--cur); border-radius:50%;
+    animation:spin 1.2s linear infinite; margin-bottom:18px; }
+  @keyframes spin { to{transform:rotate(360deg)} }
+  .loader .text { font-family:var(--serif); font-size:20px; margin-bottom:6px; }
+  .loader .sub { font-family:var(--mono); font-size:11px; color:var(--ink-faint); letter-spacing:0.12em; text-transform:uppercase;
+    max-width:380px; text-align:center; line-height:1.5; }
+  @media (prefers-reduced-motion: reduce) { .loader .ring { animation:none; } }
+  .maplibregl-ctrl-attrib { background:rgba(10,15,24,0.6) !important; font-size:9px; }
+  .maplibregl-ctrl-attrib a { color:var(--ink-faint) !important; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <div class="brand">
+      <div style="display:flex;flex-direction:column;gap:2px;line-height:1;">
+        <div class="title">MERIDIAN</div>
+        <div class="subtitle"><span><span class="deep">DEEP</span><span class="blue">BLUE</span></span><span class="dyn">DYNAMICS</span></div>
+      </div>
+      <div class="viewname">Wind &amp; Current Layers</div>
+    </div>
+    <div class="stamp">
+      <a class="nv" href="setup.html">⚙ Setup</a>
+      <a class="nv" href="routing.html">🌊 Routing</a>
+      <a class="nv active" href="layers.html">🌬 Layers</a>
+      <a class="nv" href="index.html">🌐 Harbor</a>
+      <span class="live" id="liveStamp">Fetching live</span>
+    </div>
+  </header>
+
+  <main>
+    <div class="pane">
+      <div id="map"></div>
+      <div class="tag"><b>Forecast fields</b> · wind white · current blue ×7 · no arrowheads</div>
+
+      <div class="navdata" id="navdata">
+        <div class="h">Cursor</div>
+        <div class="w" id="ndWind">Wind —</div>
+        <div class="spread" id="ndSpread" style="display:none"></div>
+        <div class="c" id="ndCur">Current —</div>
+        <div class="m" id="ndPos">move cursor over chart</div>
+      </div>
+
+      <div class="scrubbar" id="scrubbar">
+        <button class="sbtn" id="playBtn" title="Play / pause forecast">▶</button>
+        <button class="sbtn" id="stepBack" title="Step −1 h">−1h</button>
+        <button class="sbtn" id="stepFwd" title="Step +1 h">+1h</button>
+        <input id="scrub" type="range" min="0" max="167" step="0.25" value="0" />
+        <div class="t" id="scrubLabel">T+0h <span class="sub">· —</span></div>
+      </div>
+
+      <div class="loader" id="loader">
+        <div class="ring"></div>
+        <div class="text" id="loaderText">Fetching forecast fields</div>
+        <div class="sub" id="loaderSub">Open-Meteo · ensemble wind + SMOC currents</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div>
+        <p class="section-label">Layers</p>
+        <button class="toggle-btn wind active" id="windToggle"><span class="dot"></span>Wind <strong id="windState">ON</strong><span class="meta" id="windMeta">—</span></button>
+        <button class="toggle-btn cur active" id="curToggle"><span class="dot"></span>Current <strong id="curState">ON</strong><span class="meta" id="curMeta">—</span></button>
+        <button class="toggle-btn lbl active" id="lblToggle"><span class="dot"></span>Speed labels <strong id="lblState">ON</strong></button>
+      </div>
+
+      <div>
+        <p class="section-label">Convention · committed</p>
+        <div class="legend-conv">
+          <div><span class="sw" style="background:var(--mean)"></span>wind — points where it's <b>going</b> (from-dir +180°)</div>
+          <div><span class="sw" style="background:var(--cur)"></span>current — points where it <b>sets</b> (no flip) · ×7</div>
+          <div class="note">shared anchor · length ∝ speed · sampled every ~48 px</div>
+        </div>
+      </div>
+
+      <div>
+        <p class="section-label">Field</p>
+        <div class="kv">
+          <span class="k">wind model</span><span class="v" id="fWindModel">—</span>
+          <span class="k">current model</span><span class="v" id="fCurModel">—</span>
+          <span class="k">run</span><span class="v" id="fRun">—</span>
+          <span class="k">steps</span><span class="v" id="fSteps">—</span>
+          <span class="k">grid</span><span class="v" id="fGrid">—</span>
+          <span class="k">forecast age</span><span class="v ok" id="fAge">—</span>
+        </div>
+      </div>
+
+      <div>
+        <p class="section-label">Region &amp; source</p>
+        <div class="seg" id="modeSeg">
+          <button data-mode="ensemble" class="active" title="ECMWF/GFS ensemble median, 7 days">ENS 7d</button>
+          <button data-mode="deterministic" title="Deterministic best-match, 10 days">DET 10d</button>
+        </div>
+        <button class="btn" id="refetchBtn">Refetch field for this view</button>
+      </div>
+
+      <div class="sk">
+        <p class="section-label">Live at boat · Signal K</p>
+        <input id="skUrl" placeholder="signalk host:port (e.g. localhost:3000)" autocomplete="off" />
+        <button class="btn" id="skBtn">Connect</button>
+        <div class="state" id="skState">Not connected — measured wind draws at own ship in cyan,<br>never merged with the forecast field.</div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script src="lib/telemetry.js"></script>
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script src="https://unpkg.com/deck.gl@9.0.36/dist.min.js"></script>
+<script src="lib/landmask.js"></script>
+<script src="lib/field.js"></script>
+<script src="lib/fieldlayer.js"></script>
+<script>
+(async function () {
+"use strict";
+const $ = id => document.getElementById(id);
+const W = window.WxField, FL = window.FieldLayer;
+
+// ── persisted UI state ────────────────────────────────────────────────────
+const store = {
+  get(k, d) { try { const v = localStorage.getItem("meridian.layers." + k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem("meridian.layers." + k, JSON.stringify(v)); } catch (e) {} },
+};
+let showWind = store.get("wind", true), showCur = store.get("cur", true), showLbl = store.get("labels", true);
+let windMode = store.get("mode", "ensemble");
+
+// ── map (MapLibre, key-free Carto dark style) + deck.gl overlay ───────────
+const view = store.get("view", { center: [-68.0, 36.9], zoom: 5 });   // Newport→Bermuda corridor
+const map = new maplibregl.Map({
+  container: "map",
+  style: "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
+  center: view.center, zoom: view.zoom, attributionControl: { compact: true },
+});
+map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right");
+const overlay = new deck.MapboxOverlay({ interleaved: false, layers: [] });
+map.addControl(overlay);
+
+// ── fields ────────────────────────────────────────────────────────────────
+let windField = null, curField = null;
+let scrubH = 0, scrubMax = 167, playing = false, lastTs = null;
+const HOURS_PER_SEC = 3;
+let samples = [];            // screen-grid lat/lon samples (wind: everywhere)
+let waterSamples = [];       // land-masked subset (current draws only on water)
+let skLive = null;           // { lat, lon, twd, tws } measured at own ship
+
+// Natural Earth landmask (shared with the router) — fails soft; until it loads
+// the current layer simply draws everywhere, then tightens to water on ready.
+if (window.LandMask) window.LandMask.load().then(() => { resample(); render(); }).catch(() => {});
+
+function fieldGridForView() {
+  // pad the viewport ~25% so panning a little doesn't run off the field
+  const b = map.getBounds();
+  const padLat = (b.getNorth() - b.getSouth()) * 0.25, padLon = (b.getEast() - b.getWest()) * 0.25;
+  return W.makeGrid(
+    Math.max(-80, b.getSouth() - padLat), Math.min(80, b.getNorth() + padLat),
+    b.getWest() - padLon, b.getEast() + padLon, 7, 6);
+}
+
+function setStamp(cls, txt) { const el = $("liveStamp"); el.className = "live " + cls; el.textContent = txt; }
+
+async function loadFields({ refetch = false } = {}) {
+  const loader = $("loader"), lt = $("loaderText"), ls = $("loaderSub");
+  loader.style.display = "flex";
+  let fromCache = false;
+
+  if (!refetch) {            // boot: cached field paints instantly if present
+    const [cw, cc] = await Promise.all([W.loadCache("wind"), W.loadCache("current")]);
+    if (cw && cc) { windField = cw; curField = cc; fromCache = true; finishFields(true); }
+  }
+  const grid = (fromCache && !refetch) ? windField.grid : fieldGridForView();
+
+  try {
+    lt.textContent = "Fetching wind field";
+    ls.textContent = windMode === "ensemble" ? "ensemble-api · ecmwf_ifs025 · median + p5/p95" : "api.open-meteo.com · deterministic";
+    const wf = await W.fetchWind(grid, { mode: windMode, onProgress: (i, n) => ls.textContent = `wind · point ${i}/${n}` });
+    lt.textContent = "Fetching current field";
+    ls.textContent = "marine-api · MeteoFrance SMOC · cell_selection=sea";
+    const cf = await W.fetchCurrent(grid, { onProgress: (i, n) => ls.textContent = `current · point ${i}/${n}` });
+    windField = wf; curField = cf;
+    W.saveCache(wf); W.saveCache(cf);
+    finishFields(false);
+  } catch (e) {
+    if (windField && curField) {           // offline / failed: animate from cache (spec §8)
+      setStamp("offline", "Offline · cached field");
+      finishFields(true);
+    } else {
+      lt.textContent = "No field available";
+      ls.textContent = "fetch failed and no cached field — " + (e.message || e);
+      if (window.Telemetry) window.Telemetry.send("layers-fetch-failed", { error: String(e) });
+      return;
+    }
+  }
+  loader.style.display = "none";
+}
+
+function finishFields(cached) {
+  $("loader").style.display = "none";
+  scrubMax = Math.max(windField.times.length, curField.times.length) - 1;
+  $("scrub").max = scrubMax;
+  scrubH = Math.min(scrubH, scrubMax);
+  $("fWindModel").textContent = windField.source.model;
+  $("fCurModel").textContent = curField.source.model;
+  $("fRun").textContent = windField.times[0].slice(5, 16).replace("T", " ") + "Z";
+  $("fSteps").textContent = `${windField.times.length}h wind · ${curField.times.length}h cur`;
+  $("fGrid").textContent = `${windField.grid.nLat}×${windField.grid.nLon} / field`;
+  $("windMeta").textContent = windField.p5 ? "ens p50" : "det";
+  $("curMeta").textContent = "SMOC";
+  if (!cached) setStamp("", "Live · Open-Meteo");
+  resample(); render(); tickAge();
+}
+
+// forecast-age indicator (spec §8): ok < 6 h, warn < 24 h, hot beyond
+function tickAge() {
+  if (!windField) return;
+  const a = W.ageHours(windField), el = $("fAge");
+  el.textContent = a < 1 ? Math.round(a * 60) + " min" : a.toFixed(1) + " h";
+  el.className = "v " + (a < 6 ? "ok" : a < 24 ? "warn" : "hot");
+  if (a >= 6 && $("liveStamp").className.indexOf("offline") < 0)
+    setStamp("cached", `Field ${a.toFixed(0)}h old`);
+}
+setInterval(tickAge, 60000);
+
+// ── screen-grid resample + render ─────────────────────────────────────────
+function resample() {
+  const c = map.getCanvas();
+  samples = FL.screenGridSamples({
+    width: c.clientWidth, height: c.clientHeight, spacingPx: 48,
+    unproject: (px) => { const ll = map.unproject(px); return [ll.lng, ll.lat]; },
+  });
+  const LM = window.LandMask;
+  waterSamples = (LM && LM.isReady && LM.isReady())
+    ? samples.filter(s => !LM.pointOnLand(s.lat, s.lon)) : samples;
+}
+
+// hours offset between the scrub origin (wind t0) and another field's t0
+function tFor(field) {
+  if (!windField || field === windField) return scrubH;
+  const off = (new Date(field.times[0]) - new Date(windField.times[0])) / 3600000;
+  return scrubH - off;
+}
+
+function skLayers() {
+  if (!skLive) return [];
+  const zoom = map.getZoom();
+  const pxLen = Math.min(110, Math.max(6, skLive.tws * 2.2));
+  const lenNm = pxLen * FL.metersPerPixel(skLive.lat, zoom) / 1852;
+  const end = FL.sphereWalk(skLive.lat, skLive.lon, (skLive.twd + 180) % 360, lenNm);
+  const d = [{ source: [skLive.lon, skLive.lat], target: [end.lon, end.lat] }];
+  return [
+    new deck.ScatterplotLayer({ id: "sk-ring", data: d, getPosition: x => x.source,
+      radiusUnits: "pixels", getRadius: 7, stroked: true, filled: false,
+      getLineColor: [78, 205, 196, 255], getLineWidth: 2, lineWidthUnits: "pixels" }),
+    new deck.LineLayer({ id: "sk-wind", data: d, getSourcePosition: x => x.source,
+      getTargetPosition: x => x.target, getColor: [78, 205, 196, 255], getWidth: 2.6, widthUnits: "pixels" }),
+    new deck.TextLayer({ id: "sk-label", data: d, getPosition: x => x.source,
+      getText: () => `MEAS ${Math.round(skLive.tws)}kt`, getColor: [78, 205, 196, 255],
+      getSize: 10, getPixelOffset: [0, 16], fontFamily: "'Fira Code', monospace" }),
+  ];
+}
+
+function render() {
+  if (!windField || !curField) return;
+  const zoom = map.getZoom();
+  const layers = [];
+  if (showCur) {            // current beneath wind so shared anchors read wind-on-top
+    const cd = FL.lineData(curField, waterSamples, tFor(curField), zoom, W);
+    layers.push(...FL.makeDeckLayers(deck, curField, cd, { labels: showLbl }));
+  }
+  if (showWind) {
+    const wd = FL.lineData(windField, samples, tFor(windField), zoom, W);
+    layers.push(...FL.makeDeckLayers(deck, windField, wd, { labels: showLbl }));
+  }
+  layers.push(...skLayers());
+  overlay.setProps({ layers });
+  updateScrubLabel();
+}
+
+function updateScrubLabel() {
+  if (!windField) return;
+  const t = new Date(new Date(windField.times[0]).getTime() + scrubH * 3600000);
+  const dow = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][t.getUTCDay()];
+  $("scrubLabel").innerHTML = `T+${scrubH.toFixed(0)}h <span class="sub">· ${dow} ${String(t.getUTCHours()).padStart(2,"0")}:${String(t.getUTCMinutes()).padStart(2,"0")}Z</span>`;
+  $("scrub").value = scrubH;
+}
+
+map.on("load", () => { resample(); render(); });
+map.on("moveend", () => { resample(); render(); store.set("view", { center: [map.getCenter().lng, map.getCenter().lat], zoom: map.getZoom() }); });
+map.on("resize", () => { resample(); render(); });
+
+// ── timeline (spec §6) ────────────────────────────────────────────────────
+function setPlay(on) {
+  playing = on; lastTs = null;
+  $("playBtn").textContent = on ? "❚❚" : "▶";
+  $("playBtn").classList.toggle("active", on);
+  if (on) requestAnimationFrame(playLoop);
+}
+function playLoop(ts) {
+  if (!playing) return;
+  if (lastTs != null) {
+    scrubH += (ts - lastTs) / 1000 * HOURS_PER_SEC;
+    if (scrubH >= scrubMax) scrubH = 0;          // loop the forecast
+    render();
+  }
+  lastTs = ts;
+  requestAnimationFrame(playLoop);
+}
+$("playBtn").onclick = () => setPlay(!playing);
+$("stepBack").onclick = () => { scrubH = Math.max(0, scrubH - 1); render(); };
+$("stepFwd").onclick = () => { scrubH = Math.min(scrubMax, scrubH + 1); render(); };
+$("scrub").oninput = (e) => { scrubH = +e.target.value; render(); };
+
+// ── layer toggles ─────────────────────────────────────────────────────────
+function bindToggle(btn, stateEl, get, set) {
+  $(btn).onclick = () => { set(!get()); $(btn).classList.toggle("active", get());
+    $(stateEl).textContent = get() ? "ON" : "OFF"; render(); };
+  $(btn).classList.toggle("active", get()); $(stateEl).textContent = get() ? "ON" : "OFF";
+}
+bindToggle("windToggle", "windState", () => showWind, v => { showWind = v; store.set("wind", v); });
+bindToggle("curToggle", "curState", () => showCur, v => { showCur = v; store.set("cur", v); });
+bindToggle("lblToggle", "lblState", () => showLbl, v => { showLbl = v; store.set("labels", v); });
+
+// ── region / source controls ──────────────────────────────────────────────
+for (const b of $("modeSeg").querySelectorAll("button")) {
+  b.classList.toggle("active", b.dataset.mode === windMode);
+  b.onclick = () => {
+    windMode = b.dataset.mode; store.set("mode", windMode);
+    for (const x of $("modeSeg").querySelectorAll("button")) x.classList.toggle("active", x === b);
+    loadFields({ refetch: true });
+  };
+}
+$("refetchBtn").onclick = () => loadFields({ refetch: true });
+
+// ── cursor interrogation (spec §7) ────────────────────────────────────────
+map.on("mousemove", (e) => interrogate(e.lngLat.lat, e.lngLat.lng));
+map.on("click", (e) => interrogate(e.lngLat.lat, e.lngLat.lng));   // tap on touch
+function interrogate(lat, lon) {
+  if (!windField) return;
+  const ws = W.sample(windField, lat, lon, tFor(windField));
+  const onLand = window.LandMask && window.LandMask.isReady && window.LandMask.isReady() && window.LandMask.pointOnLand(lat, lon);
+  const cs = (!onLand && curField) ? W.sample(curField, lat, lon, tFor(curField)) : null;
+  const f3 = d => String(Math.round(d)).padStart(3, "0");
+  $("ndWind").textContent = ws ? `Wind ${f3(ws.dir)}° ${ws.speed.toFixed(1)} kt` : "Wind — outside field";
+  const sp = $("ndSpread");
+  if (ws && ws.p5 != null) { sp.style.display = ""; sp.textContent = `ens p5–p95 ${ws.p5.toFixed(0)}–${ws.p95.toFixed(0)} kt`; }
+  else sp.style.display = "none";
+  $("ndCur").textContent = cs ? `Current ${f3(cs.dir)}° ${cs.speed.toFixed(1)} kt` : onLand ? "Current — land" : "Current — outside field";
+  $("ndPos").textContent = `${Math.abs(lat).toFixed(2)}°${lat >= 0 ? "N" : "S"} · ${Math.abs(lon).toFixed(2)}°${lon >= 0 ? "E" : "W"} · T+${scrubH.toFixed(0)}h`;
+}
+
+// ── Signal K live-at-boat (spec §8) ───────────────────────────────────────
+let skWs = null, skData = { lat: null, lon: null, twd: null, tws: null };
+$("skUrl").value = store.get("signalk", "");
+$("skBtn").onclick = () => {
+  const host = $("skUrl").value.trim();
+  if (skWs) { skWs.close(); skWs = null; skLive = null; $("skBtn").textContent = "Connect"; $("skState").textContent = "Disconnected."; render(); return; }
+  if (!host) return;
+  store.set("signalk", host);
+  try {
+    skWs = new WebSocket(`ws://${host}/signalk/v1/stream?subscribe=none`);
+    $("skState").textContent = "Connecting…";
+    skWs.onopen = () => {
+      $("skBtn").textContent = "Disconnect";
+      $("skState").innerHTML = '<span class="on">Connected</span> — waiting for position + wind deltas';
+      skWs.send(JSON.stringify({ context: "vessels.self", subscribe: [
+        { path: "navigation.position", period: 2000 },
+        { path: "environment.wind.speedTrue", period: 2000 },
+        { path: "environment.wind.directionTrue", period: 2000 },
+      ]}));
+    };
+    skWs.onmessage = (ev) => {
+      try {
+        const m = JSON.parse(ev.data);
+        for (const u of m.updates || []) for (const v of u.values || []) {
+          if (v.path === "navigation.position" && v.value) { skData.lat = v.value.latitude; skData.lon = v.value.longitude; }
+          if (v.path === "environment.wind.speedTrue") skData.tws = v.value * 1.94384;      // m/s → kn
+          if (v.path === "environment.wind.directionTrue") skData.twd = (v.value * 180 / Math.PI + 360) % 360;
+        }
+        if (skData.lat != null && skData.tws != null && skData.twd != null) {
+          skLive = { ...skData };
+          $("skState").innerHTML = `<span class="on">Live</span> — measured ${Math.round(skLive.tws)} kt / ${Math.round(skLive.twd)}° at own ship`;
+          render();
+        }
+      } catch (e) {}
+    };
+    skWs.onerror = () => { $("skState").textContent = "Connection failed — check host and that Signal K allows ws."; };
+    skWs.onclose = () => { if (skWs) { skWs = null; skLive = null; $("skBtn").textContent = "Connect"; render(); } };
+  } catch (e) { $("skState").textContent = "Bad host: " + e.message; }
+};
+
+// ── boot ──────────────────────────────────────────────────────────────────
+window.addEventListener("offline", () => { if (windField) setStamp("offline", "Offline · cached field"); });
+window.addEventListener("online", () => setStamp("cached", "Online · field may be stale"));
+loadFields();
+})();
+</script>
+</body>
+</html>
