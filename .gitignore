@@ -1,23 +1,40 @@
-# Logs
+# ── Secrets / env — never commit real keys ──────────────────────────────
+.env
+.env.*
+*.env
+!.env.example
+
+# ── Boat & map data (local datasets, not reviewable code) ────────────────
+enc_charts/
+crawl_cache/
+sailboat_data/
+cruiser_boats.json
+isolate_cruisers.py
+*.pmtiles
+
+# ── Logs / telemetry ──────────────────────────────────────────────────────
 logs
 *.log
+telemetry.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# ── Build / deps / bundles ────────────────────────────────────────────────
 node_modules
 dist
 dist-ssr
 *.local
+meridian-review-*.zip
 
-# Secrets — never commit real keys
-.env
-.env.*
-!.env.example
+# ── Tooling cruft ─────────────────────────────────────────────────────────
+.mcp-logs/
+.codex-mcp.config
+.codex-container.toml
 
-# Editor directories and files
+# ── Editor directories and files ──────────────────────────────────────────
 .vscode/*
 !.vscode/extensions.json
 .idea
@@ -27,6 +44,3 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
-telemetry.log
-.serpapi.env
-meridian-review-*.zip
