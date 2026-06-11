@@ -124,7 +124,7 @@
       <div id="map"></div>
       <!-- transparent particle-flow overlay (FLOW mode); never intercepts the map -->
       <canvas id="flowCanvas" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:2;display:none;"></canvas>
-      <div class="tag" id="paneTag"><b>Forecast fields</b> · wind white · current blue ×7 · no arrowheads</div>
+      <div class="tag" id="paneTag"><b>Forecast fields</b> · wind white · current blue √scale · no arrowheads</div>
 
       <div class="navdata" id="navdata">
         <div class="h">Cursor</div>
@@ -166,7 +166,7 @@
         <p class="section-label">Convention · committed</p>
         <div class="legend-conv">
           <div><span class="sw" style="background:var(--mean)"></span>wind — points where it's <b>going</b> (from-dir +180°)</div>
-          <div><span class="sw" style="background:var(--cur)"></span>current — points where it <b>sets</b> (no flip) · ×7</div>
+          <div><span class="sw" style="background:var(--cur)"></span>current — points where it <b>sets</b> (no flip) · √scale</div>
           <div class="note">shared anchor · length ∝ speed · sampled every ~48 px</div>
         </div>
       </div>
@@ -245,7 +245,7 @@ let skLive = null;           // { lat, lon, twd, tws } measured at own ship
 
 // Natural Earth landmask (shared with the router) — fails soft; until it loads
 // the current layer simply draws everywhere, then tightens to water on ready.
-if (window.LandMask) window.LandMask.load().then(() => { resample(); render(); }).catch(() => {});
+if (window.LandMask) window.LandMask.load().then(() => { flowInvalidate(); resample(); render(); }).catch(() => {});
 
 function fieldGridForView() {
   // pad the viewport ~25% so panning a little doesn't run off the field
@@ -390,7 +390,7 @@ function flowInit() {
   if (flow || !window.FlowField) return;
   flow = new FlowField($("flowCanvas"));
   flowWind = flow.addLayer({
-    numParticles: 14000, maxSpeed: 33,
+    numParticles: 6500, maxSpeed: 33, minSpeed: 0.2,
     // warm-only ramp: NO blue/cool tones — blue is current's identity, and a
     // blue-gray low end made slow wind over land read as "current on land".
     colorStops: [
@@ -399,7 +399,7 @@ function flowInit() {
     heatmapOpacity: gustOn ? 0.30 : 0, fadeOpacity: 0.972, pointSize: 1.7, dropRate: 0.002, dropRateBump: 0.008,
   });
   flowCur = flow.addLayer({
-    numParticles: 9000, maxSpeed: 2.4,
+    numParticles: 4000, maxSpeed: 4, minSpeed: 0.05,
     colorStops: [
       { stop: 0.0, color: "rgba(58,90,140,0.8)" }, { stop: 0.5, color: "#4fa3ff" }, { stop: 1.0, color: "#9ad7ff" }],
     // faster baseline drop: particles that bilinear-leak onto zeroed land
@@ -425,6 +425,29 @@ function prepFlowField(field, h, kind, bounds) {
   const g = field.grid;
   const gLatMin = g.lat0, gLatMax = g.lat0 + (g.nLat - 1) * g.dLat;
   const gLonMin = g.lon0, gLonMax = g.lon0 + (g.nLon - 1) * g.dLon;
+  // Land mask first (current only): cell centers on land, then a 1-cell
+  // dilation — bilinear interpolation ramps flow halfway into a zero cell,
+  // so without dilation particles visibly ride onto the coastline.
+  let land = null;
+  if (maskLand) {
+    land = new Uint8Array(NW * NH);
+    for (let r = 0; r < NH; r++) {
+      const lat = latN - (r / (NH - 1)) * (latN - latS);
+      for (let c = 0; c < NW; c++) {
+        const lon = lonW + (c / (NW - 1)) * (lonE - lonW);
+        if (LM.pointOnLand(lat, lon)) land[r * NW + c] = 1;
+      }
+    }
+    const dil = new Uint8Array(land);
+    for (let r = 0; r < NH; r++) for (let c = 0; c < NW; c++) {
+      if (!land[r * NW + c]) continue;
+      for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+        const rr = r + dr, cc = c + dc;
+        if (rr >= 0 && rr < NH && cc >= 0 && cc < NW) dil[rr * NW + cc] = 1;
+      }
+    }
+    land = dil;
+  }
   for (let r = 0; r < NH; r++) {
     const lat = latN - (r / (NH - 1)) * (latN - latS);
     const sLat = Math.max(gLatMin, Math.min(gLatMax, lat));
@@ -432,12 +455,13 @@ function prepFlowField(field, h, kind, bounds) {
       const lon = lonW + (c / (NW - 1)) * (lonE - lonW);
       const sLon = Math.max(gLonMin, Math.min(gLonMax, lon));
       let uu = 0, vv = 0;
-      const s = W.sample(field, sLat, sLon, h);
-      // land test at the TRUE position (not the clamped one)
-      if (s && !(maskLand && LM.pointOnLand(lat, lon))) {
-        const rad = s.dir * Math.PI / 180;
-        if (kind === "wind") { uu = -s.speed * Math.sin(rad); vv = -s.speed * Math.cos(rad); } // FROM → going
-        else { uu = s.speed * Math.sin(rad); vv = s.speed * Math.cos(rad); }                   // sets TO
+      if (!(land && land[r * NW + c])) {
+        const s = W.sample(field, sLat, sLon, h);
+        if (s) {
+          const rad = s.dir * Math.PI / 180;
+          if (kind === "wind") { uu = -s.speed * Math.sin(rad); vv = -s.speed * Math.cos(rad); } // FROM → going
+          else { uu = s.speed * Math.sin(rad); vv = s.speed * Math.cos(rad); }                   // sets TO
+        }
       }
       u[r * NW + c] = uu; v[r * NW + c] = vv;
     }
@@ -536,7 +560,7 @@ function applyVizMode() {
   for (const x of $("vizSeg").querySelectorAll("button")) x.classList.toggle("active", x.dataset.viz === vizMode);
   $("paneTag").innerHTML = vizMode === "flow"
     ? "<b>Forecast fields</b> · particles drift with the flow · warm wind · blue current"
-    : "<b>Forecast fields</b> · wind white · current blue ×7 · no arrowheads";
+    : "<b>Forecast fields</b> · wind white · current blue √scale · no arrowheads";
   render();
 }
 for (const b of $("vizSeg").querySelectorAll("button")) {
