@@ -901,8 +901,10 @@ async function loadLiveAndRoute(){
     const e=document.createElement('div'); e.className='err-detail'; e.innerHTML=`<strong>Error:</strong> ${err.message.replace(/</g,'&lt;')}`; loader.appendChild(e);
     document.getElementById('liveStamp').className='err'; document.getElementById('liveStamp').textContent='Connection failed'; }
 }
-async function refreshWindGrid(){
+let windGridRetryTimer=null;
+async function refreshWindGrid(attempt=1){
   const b=document.getElementById('windBtn');
+  if(windGridRetryTimer){ clearTimeout(windGridRetryTimer); windGridRetryTimer=null; }
   try{
     const g=await fetchWindGrid();
     if(windPLC){ mainViewer.scene.primitives.remove(windPLC); windPLC=null; }
@@ -910,7 +912,11 @@ async function refreshWindGrid(){
     b.disabled=false; b.textContent='WIND'; b.classList.toggle('active',windShown);
     console.log('[routing] wind grid ready:',g.length,'pts');
   }catch(e){ console.warn('[routing] wind grid unavailable:',e.message);
-    b.disabled=true; b.classList.remove('active'); b.textContent='WIND —'; }
+    b.disabled=true; b.classList.remove('active'); b.textContent='WIND —';
+    // Visualization-only layer: heal itself when the forecast host comes back
+    // (seen live: api.open-meteo.com outage while the ensemble host was fine).
+    if(attempt<6) windGridRetryTimer=setTimeout(()=>refreshWindGrid(attempt+1),90000);
+  }
 }
 
 // ════════════════════ DEP/ARR port search ════════════════════
