@@ -111,6 +111,14 @@
   .offline .sub{font-family:var(--mono);font-size:10px;color:var(--ink-faint);letter-spacing:.14em;text-align:center;line-height:1.8}
   .offline .sub b{color:var(--ink-dim)}
 
+  .setupcard{display:flex;flex-direction:column;gap:12px;max-width:520px;border:1px solid var(--line-bright);
+    border-radius:6px;padding:16px 18px;background:rgba(10,15,24,.6)}
+  .sstep{display:grid;grid-template-columns:84px 1fr;gap:10px;font-size:12px;color:var(--ink-dim);line-height:1.5}
+  .sstep b{font-family:var(--mono);font-size:9px;letter-spacing:.14em;color:var(--envelope);padding-top:2px}
+  .sstep i{color:var(--ink);font-style:normal;font-weight:600}
+  .sstep code{font-family:var(--mono);font-size:10px;color:var(--cool);background:rgba(78,205,196,.07);padding:1px 5px;border-radius:3px}
+  .stub{font-family:var(--mono);font-size:7.5px;letter-spacing:.12em;color:var(--warn);border:1px solid rgba(255,185,56,.4);border-radius:3px;padding:1px 4px;margin-left:6px;vertical-align:middle}
+
   /* right: control panel */
   .ctrlhead{font-family:var(--serif);font-style:italic;font-size:19px;color:var(--ink);padding:13px 18px 2px}
   .ctrlsub{font-family:var(--mono);font-size:8px;letter-spacing:.22em;color:var(--ink-faint);padding:0 18px 12px}
@@ -154,13 +162,7 @@
     <div class="title">MERIDIAN</div>
     <div class="subtitle"><span><span class="deep">DEEP</span><span class="blue">BLUE</span></span><span class="dyn">DYNAMICS</span></div>
   </div>
-  <div class="tabs">
-    <a class="tab" href="setup.html">⚙ Setup</a>
-    <a class="tab" href="routing.html">🌊 Routing</a>
-    <a class="tab" href="layers.html">🌬 Layers</a>
-    <a class="tab" href="index.html">🌐 Harbor</a>
-    <a class="tab active" href="radio.html">📻 Radio</a>
-  </div>
+  <nav data-meridian-nav style="margin-left:8px"></nav>
   <div class="spacer"></div>
   <div class="live"><span class="dot" id="connDot"></span><span id="connText">CONNECTING…</span></div>
 </header>
@@ -215,9 +217,18 @@
     <div class="transcripts" id="transcripts"><div class="tx-empty">No transcriptions yet — they appear after each voice transmission.</div></div>
 
     <div class="offline" id="offline">
-      <div class="big">Radio offline</div>
-      <div class="sub">gnosis-radio is not reachable on <b>ws://127.0.0.1:9081</b><br/>
-        start it (or <b>node scripts/mock-radio.mjs</b> for a synthetic feed) · retrying every 2 s</div>
+      <div class="big">Radio not detected</div>
+      <div class="setupcard">
+        <div class="sstep"><b>1 · DONGLE</b><span>Plug in the RTL-SDR USB dongle (RTL2838).</span></div>
+        <div class="sstep"><b>2 · DRIVER</b><span>Windows, once: run <i>Zadig</i> → Options ▸ List All Devices →
+          select <i>“Bulk-In, Interface (Interface 0)”</i> → Install <i>WinUSB</i>.
+          The radio sidecar will automate this step.</span></div>
+        <div class="sstep"><b>3 · SERVICE</b><span>The bundled radio service will start with the app
+          (sidecar — spec-radio-embedded). Dev: <code>gnosis-radio scan</code>, or
+          <code>node scripts/mock-radio.mjs</code> for a synthetic feed (always badged ⚠).</span></div>
+      </div>
+      <div class="sub">listening on <b>ws://127.0.0.1:9081</b> · retrying every 2 s</div>
+    </div>
     </div>
   </div>
 
@@ -255,8 +266,12 @@
 
     <div class="cgroup">
       <div class="clabel">TRANSCRIPTION</div>
-      <div class="src"><span class="sdot"></span>Local Whisper · large-v3<span class="tag">LOCAL</span></div>
-      <div class="logline">fallback: <b>service</b> when online · else <b>queue</b></div>
+      <div class="toggle"><div class="tname">Remote transcription service<span class="stub">STUB</span></div><div class="sw" id="remoteTxSw"><i></i></div></div>
+      <div id="localTxRow">
+        <div class="src"><span class="sdot"></span>Local Whisper · small<span class="tag">LOCAL</span></div>
+        <div class="logline">whisper.cpp sidecar · Pi-class target (spec pending)</div>
+      </div>
+      <div class="toggle"><div class="tname">Save logs remotely<span class="stub">STUB</span></div><div class="sw" id="remoteLogSw"><i></i></div></div>
       <div class="logline">session: <b id="txCount">0</b> transcriptions</div>
     </div>
   </div>
@@ -270,6 +285,7 @@
 </div>
 
 <script src="lib/telemetry.js"></script>
+<script src="lib/topbar.js"></script>
 <script>
 // ════════════════════════════════════════════════════════════════════════
 // Live VHF radio view. Layout follows the design prototype; the DSP/render
@@ -534,6 +550,20 @@ $('listenSw').addEventListener('click',async()=>{ listenOn=!listenOn; $('listenS
 let sqDeb=null;
 $('sqSlider').addEventListener('input',()=>{ $('sqMarginLbl').textContent='+'+$('sqSlider').value+' dB'; renderSignal();
   if(sqDeb)clearTimeout(sqDeb); sqDeb=setTimeout(async()=>{ try{ await radio.control('/squelch',{squelch:parseFloat($('sqSlider').value)}); }catch(e){} },300); });
+
+// ── transcription routing (STUB — remote service spec pending) ──
+const TXCFG=(()=>{ try{ const s=JSON.parse(localStorage.getItem('meridian.transcribe')||'{}');
+  return { remote:!!s.remote, saveLogs:!!s.saveLogs }; }catch(e){ return {remote:false,saveLogs:false}; } })();
+function saveTxCfg(){ try{ localStorage.setItem('meridian.transcribe',JSON.stringify(TXCFG)); }catch(e){} }
+function renderTxCfg(){
+  $('remoteTxSw').classList.toggle('on',TXCFG.remote);
+  $('remoteLogSw').classList.toggle('on',TXCFG.saveLogs);
+  // remote ON → one button is the whole story; the local whisper row hides
+  $('localTxRow').style.display=TXCFG.remote?'none':'';
+}
+$('remoteTxSw').addEventListener('click',()=>{ TXCFG.remote=!TXCFG.remote; saveTxCfg(); renderTxCfg(); });
+$('remoteLogSw').addEventListener('click',()=>{ TXCFG.saveLogs=!TXCFG.saveLogs; saveTxCfg(); renderTxCfg(); });
+renderTxCfg();
 
 // ── event stream ──
 function setConn(open){

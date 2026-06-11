@@ -5,6 +5,21 @@ step from `current/AGENT-INSTRUCTIONS.md` §3.7.
 
 ---
 
+## 2026-06-11 (later still) — authored `spec-radio-embedded.md` (draft)
+
+Owner direction: gnosis-radio was a REFERENCE; all radio code moves into this
+repo, zero user setup. Draft spec filed with the confirmed decisions
+(in-repo Rust sidecar + Electron supervisor, driver onboarding in the radio
+view's center pane, whisper.cpp SMALL model on Pi-class hardware, remote
+transcription + remote logs as stub toggles pending the owner's service spec,
+standardized top bar + cross-view radio unread badge) and the **build-agent
+decomposition** (§4: radio-core, sidecar-supervisor, driver-onboarding,
+transcribe-local, radio-view) for the owner to author agent specs from.
+Index updated. Frontend pieces shipped same day: lib/topbar.js mounted in all
+five views, guided-setup center pane, transcription toggles.
+
+---
+
 ## 2026-06-11 (later) — radio UI prototype drop
 
 **Filed:** `radio.html` (design prototype, simulated data) → consumed as the
