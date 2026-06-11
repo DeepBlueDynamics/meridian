@@ -29,3 +29,4 @@ dist-ssr
 *.sw?
 telemetry.log
 .serpapi.env
+meridian-review-*.zip
