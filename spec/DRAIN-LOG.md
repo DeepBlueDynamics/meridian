@@ -22,7 +22,12 @@ step from `current/AGENT-INSTRUCTIONS.md` §3.7.
   **non-commercial only** — flagged below).
 - `specs-index.md` regenerated: wind-current row → v2; v1 + artifact listed.
 
-**⚠ Pending decision — implementation code drop (NOT a spec):**
+**RESOLVED 2026-06-11 (commit 0be6c78):** the code drop below has been
+hand-merged. Its base turned out to be 7d59622 and its routing.html delta was
+the same fix as 369de01, so the merge reduced to additions (field.js,
+fieldlayer.js, layers.html, nav links, MERIDIAN_VIEW=layers). Verified live.
+
+**~~⚠ Pending decision~~ — implementation code drop (NOT a spec):**
 `archive/meridian-wind-current-layers (1).zip` is a full app snapshot from
 another agent implementing the wind/current layers (new `lib/field.js`,
 `lib/fieldlayer.js`, `layers.html`; modified `routing.html`, `index.html`,
