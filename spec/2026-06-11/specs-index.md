@@ -18,6 +18,7 @@ Single source of truth for the spec suite. Every spec carries a `_Revised:` date
 | `spec-route-research.md` | Route research product: crawl + summarize what's along a passage (**draft**, backend) | grub/Lume; feeds route-research-frontend |
 | `spec-route-research-frontend.md` | From/To picker, route variants, along-the-way itinerary on ROUTING view (**draft**) | consumes route-research via bridge |
 | `spec-refactor-guidance.md` | Codebase modularization: css/theme, page controllers, api-service consolidation (**draft**) | guides all frontend work |
+| `spec-build-signalk-sim.md` | BUILD AGENT: wire-faithful Signal K boat simulator (**draft**) | implements spec-signalk §6; client bridge frozen |
 | `spec-auth.md` | Nuts Auth JWTs — one token across service/ACP/Shivvr/grubcrawler | underpins every endpoint |
 | `spec-google-3d-tiles.md` | Google 3D Tiles ToS + proxy (the referenced `spec.md`) | `/tiles`; quota by `sub` |
 | `spec-wind-current-layers-v2.md` | Wind + current layers + the **shared `Field` model** (**current**, implemented) | supersedes `spec-wind-current-layers.md`; load-bearing: `/weather`,`/ocean`,`/bathy` all return `Field` |

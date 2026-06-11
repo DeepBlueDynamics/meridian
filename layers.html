@@ -105,18 +105,8 @@
 </head>
 <body>
 <div id="app">
-  <header>
-    <div class="brand">
-      <div style="display:flex;flex-direction:column;gap:2px;line-height:1;">
-        <div class="title">MERIDIAN</div>
-        <div class="subtitle"><span><span class="deep">DEEP</span><span class="blue">BLUE</span></span><span class="dyn">DYNAMICS</span></div>
-      </div>
-      <div class="viewname">Wind &amp; Current Layers</div>
-    </div>
-    <div class="stamp">
-      <nav data-meridian-nav></nav>
-      <span class="live" id="liveStamp">Fetching live</span>
-    </div>
+  <header data-meridian-header="Layers">
+    <span class="live" id="liveStamp">Fetching live</span>
   </header>
 
   <main>
@@ -597,44 +587,45 @@ function interrogate(lat, lon) {
   $("ndPos").textContent = `${Math.abs(lat).toFixed(2)}°${lat >= 0 ? "N" : "S"} · ${Math.abs(lon).toFixed(2)}°${lon >= 0 ? "E" : "W"} · T+${scrubH.toFixed(0)}h`;
 }
 
-// ── Signal K live-at-boat (spec §8) ───────────────────────────────────────
-let skWs = null, skData = { lat: null, lon: null, twd: null, tws: null };
+// ── Signal K live-at-boat — via the preload bridge (spec-signalk §2) ──────
+// The page opens NO sockets; the bridge owns discovery/hello/subscribe/
+// reconnect and converts SI→display once. Measured data stays cyan-only.
+const SK = window.meridian && window.meridian.signalk;
+let skOn = false, skRenderDeb = null;
 $("skUrl").value = store.get("signalk", "");
+function skApply() {
+  if (!SK) return;
+  const pos = SK.latest("navigation.position");
+  const tws = SK.latest("environment.wind.speedTrue");
+  const twd = SK.latest("environment.wind.directionTrue");
+  if (pos && pos.si && tws && twd) {
+    skLive = { lat: pos.si.latitude, lon: pos.si.longitude, tws: tws.display, twd: twd.display };
+    $("skState").innerHTML = `<span class="on">Live</span> — measured ${Math.round(skLive.tws)} kt / ${Math.round(skLive.twd)}° at own ship`;
+    if (skRenderDeb) return;                     // coalesce 1 Hz deltas into renders
+    skRenderDeb = setTimeout(() => { skRenderDeb = null; render(); }, 250);
+  }
+}
+if (SK) SK.onEvent((e) => {
+  if (e.type === "status") {
+    if (!skOn) return;
+    if (e.connected) $("skState").innerHTML = '<span class="on">Connected</span> — self ' + (e.self || "?") + " · waiting for deltas";
+    else $("skState").textContent = e.error ? ("Connection failed: " + e.error) : "Reconnecting…";
+  } else if (e.type === "delta") skApply();
+});
 $("skBtn").onclick = () => {
+  if (!SK) { $("skState").textContent = "Bridge unavailable (window.meridian.signalk missing)."; return; }
+  if (skOn) {
+    SK.disconnect(); skOn = false; skLive = null;
+    $("skBtn").textContent = "Connect"; $("skState").textContent = "Disconnected.";
+    render(); return;
+  }
   const host = $("skUrl").value.trim();
-  if (skWs) { skWs.close(); skWs = null; skLive = null; $("skBtn").textContent = "Connect"; $("skState").textContent = "Disconnected."; render(); return; }
   if (!host) return;
   store.set("signalk", host);
-  try {
-    skWs = new WebSocket(`ws://${host}/signalk/v1/stream?subscribe=none`);
-    $("skState").textContent = "Connecting…";
-    skWs.onopen = () => {
-      $("skBtn").textContent = "Disconnect";
-      $("skState").innerHTML = '<span class="on">Connected</span> — waiting for position + wind deltas';
-      skWs.send(JSON.stringify({ context: "vessels.self", subscribe: [
-        { path: "navigation.position", period: 2000 },
-        { path: "environment.wind.speedTrue", period: 2000 },
-        { path: "environment.wind.directionTrue", period: 2000 },
-      ]}));
-    };
-    skWs.onmessage = (ev) => {
-      try {
-        const m = JSON.parse(ev.data);
-        for (const u of m.updates || []) for (const v of u.values || []) {
-          if (v.path === "navigation.position" && v.value) { skData.lat = v.value.latitude; skData.lon = v.value.longitude; }
-          if (v.path === "environment.wind.speedTrue") skData.tws = v.value * 1.94384;      // m/s → kn
-          if (v.path === "environment.wind.directionTrue") skData.twd = (v.value * 180 / Math.PI + 360) % 360;
-        }
-        if (skData.lat != null && skData.tws != null && skData.twd != null) {
-          skLive = { ...skData };
-          $("skState").innerHTML = `<span class="on">Live</span> — measured ${Math.round(skLive.tws)} kt / ${Math.round(skLive.twd)}° at own ship`;
-          render();
-        }
-      } catch (e) {}
-    };
-    skWs.onerror = () => { $("skState").textContent = "Connection failed — check host and that Signal K allows ws."; };
-    skWs.onclose = () => { if (skWs) { skWs = null; skLive = null; $("skBtn").textContent = "Connect"; render(); } };
-  } catch (e) { $("skState").textContent = "Bad host: " + e.message; }
+  skOn = true;
+  $("skBtn").textContent = "Disconnect"; $("skState").textContent = "Connecting…";
+  const r = SK.connect(host);
+  if (!r.ok) $("skState").textContent = "Connection failed: " + (r.error || "bad host");
 };
 
 // ── boot ──────────────────────────────────────────────────────────────────
