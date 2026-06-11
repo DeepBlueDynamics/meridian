@@ -515,6 +515,16 @@ function markOutliers(routes){
 }
 
 // ════════════════════ Cesium route rendering ════════════════════
+// Points/labels skip the depth test only when the camera is NEAR (avoids
+// z-fighting with 3D-tile terrain at corridor zoom). Beyond this range the
+// test applies, so geometry past the horizon is properly hidden by the globe
+// instead of shining through the planet.
+const DEPTH_OFF_NEAR=2.5e6;
+// Route lines ride ~1.5 km above the ellipsoid: invisible at corridor scale,
+// but they no longer z-fight the globe surface (the old depthFail material
+// masked that) and still vanish correctly behind the horizon.
+const ROUTE_ALT=1500;
+const degArr=(flat)=>{ const a=[]; for(let i=0;i<flat.length;i+=2)a.push(flat[i],flat[i+1],ROUTE_ALT); return Cesium.Cartesian3.fromDegreesArrayHeights(a); };
 let routeEntities=[];
 function clearRoutes(){ routeEntities.forEach(e=>mainViewer.entities.remove(e)); routeEntities=[]; }
 function colorA(hex,a){ return Cesium.Color.fromCssColorString(hex).withAlpha(a); }
@@ -558,14 +568,14 @@ function addSegmentedRoute(route,hex,width){
   }
   for(const run of runs){
     if(run.pts.length<4||!run.pts.every(Number.isFinite))continue;
-    const positions=Cesium.Cartesian3.fromDegreesArray(run.pts);
+    const positions=degArr(run.pts);
     if(run.motor){
       routeEntities.push(mainViewer.entities.add({ polyline:{ positions, width:Math.max(2,width-1),
         material:new Cesium.PolylineDashMaterialProperty({color:colorA(hex,0.95),dashLength:10}),
-        depthFailMaterial:colorA(hex,0.4), arcType:Cesium.ArcType.GEODESIC } }));
+        arcType:Cesium.ArcType.GEODESIC } }));
     }else{
       routeEntities.push(mainViewer.entities.add({ polyline:{ positions, width,
-        material:colorA(hex,0.95), depthFailMaterial:colorA(hex,0.5), arcType:Cesium.ArcType.GEODESIC } }));
+        material:colorA(hex,0.95), arcType:Cesium.ArcType.GEODESIC } }));
     }
   }
 }
@@ -576,14 +586,14 @@ function renderRoutes3D(routes,envelope){
   const etaColor=buildEtaColor(routes);
   for(const r of routes){ const flat=[]; for(const p of r.path){ flat.push(p.lon,p.lat); } if(flat.length<4)continue;
     const col=etaColor(r,0.13);
-    const ent=mainViewer.entities.add({ show:fleetShown, polyline:{ positions:Cesium.Cartesian3.fromDegreesArray(flat), width:1.5, material:col, depthFailMaterial:col, arcType:Cesium.ArcType.GEODESIC } });
+    const ent=mainViewer.entities.add({ show:fleetShown, polyline:{ positions:degArr(flat), width:1.5, material:col, arcType:Cesium.ArcType.GEODESIC } });
     routeEntities.push(ent); fleetEntities.push(ent); }
   // Dashed 5%/95% envelope boundary lines (statistical corridor, kept subtle).
   const e5=[],e95=[];
   for(const e of envelope){ if([e.lon50,e.lat5,e.lat95].every(Number.isFinite)){ e5.push(e.lon50,e.lat5); e95.push(e.lon50,e.lat95); } }
   const dash=new Cesium.PolylineDashMaterialProperty({ color:colorA("#f9a826",0.5), dashLength:14 });
   for(const band of [e5,e95]){ if(band.length>=4)
-    routeEntities.push(mainViewer.entities.add({ polyline:{ positions:Cesium.Cartesian3.fromDegreesArray(band), width:1.4, material:dash, depthFailMaterial:colorA("#f9a826",0.25), arcType:Cesium.ArcType.GEODESIC } })); }
+    routeEntities.push(mainViewer.entities.add({ polyline:{ positions:degArr(band), width:1.4, material:dash, arcType:Cesium.ArcType.GEODESIC } })); }
   // The three representative real routes (solid sail / dashed motor legs).
   const reps=repRoutes(routes);
   for(const rep of reps) addSegmentedRoute(rep.r, rep.hex, rep.key==='P50'?4:2.8);
@@ -592,11 +602,11 @@ function renderRoutes3D(routes,envelope){
   if(p50&&p50.r.path.length>2){ const end=p50.r.path[p50.r.path.length-1].time;
     for(let h=24;h<end;h+=24){ const p=posAt(p50.r.path,h);
       routeEntities.push(mainViewer.entities.add({ position:Cesium.Cartesian3.fromDegrees(p.lon,p.lat,0),
-        point:{pixelSize:5,color:colorA("#f4f7fc",0.95),outlineColor:colorA("#0a0f18",0.9),outlineWidth:1,disableDepthTestDistance:Number.POSITIVE_INFINITY},
-        label:{text:(h/24)+'d',font:"10px Fira Code, monospace",fillColor:colorA("#9ba8bd",0.95),pixelOffset:new Cesium.Cartesian2(8,-6),disableDepthTestDistance:Number.POSITIVE_INFINITY} })); } }
+        point:{pixelSize:5,color:colorA("#f4f7fc",0.95),outlineColor:colorA("#0a0f18",0.9),outlineWidth:1,disableDepthTestDistance:DEPTH_OFF_NEAR},
+        label:{text:(h/24)+'d',font:"10px Fira Code, monospace",fillColor:colorA("#9ba8bd",0.95),pixelOffset:new Cesium.Cartesian2(8,-6),disableDepthTestDistance:DEPTH_OFF_NEAR} })); } }
   const mk=(p,hex,txt)=>mainViewer.entities.add({ position:Cesium.Cartesian3.fromDegrees(p.lon,p.lat,0),
-    point:{pixelSize:9,color:Cesium.Color.fromCssColorString(hex),outlineColor:Cesium.Color.WHITE,outlineWidth:1,disableDepthTestDistance:Number.POSITIVE_INFINITY},
-    label:{text:txt,font:"11px Fira Code, monospace",fillColor:Cesium.Color.fromCssColorString(hex),pixelOffset:new Cesium.Cartesian2(10,-8),disableDepthTestDistance:Number.POSITIVE_INFINITY} });
+    point:{pixelSize:9,color:Cesium.Color.fromCssColorString(hex),outlineColor:Cesium.Color.WHITE,outlineWidth:1,disableDepthTestDistance:DEPTH_OFF_NEAR},
+    label:{text:txt,font:"11px Fira Code, monospace",fillColor:Cesium.Color.fromCssColorString(hex),pixelOffset:new Cesium.Cartesian2(10,-8),disableDepthTestDistance:DEPTH_OFF_NEAR} });
   const shortName=(p)=>String(p.name||'').split(',')[0].toUpperCase()||'PORT';
   routeEntities.push(mk(START,"#4ecdc4",shortName(START)+" · DEP")); routeEntities.push(mk(DEST,"#e94560",shortName(DEST)+" · ARR"));
   document.getElementById('routeLegend').style.display='flex';
@@ -632,17 +642,17 @@ function buildScrubber(routes){
   for(const r of routes){
     const pp=fleetPC.add({ position:Cesium.Cartesian3.fromDegrees(START.lon,START.lat,50), pixelSize:5,
       color:etaColor(r,0.9), outlineColor:colorA('#0a0f18',0.8), outlineWidth:1,
-      disableDepthTestDistance:Number.POSITIVE_INFINITY });
+      disableDepthTestDistance:DEPTH_OFF_NEAR });
     fleetMeta.push({route:r,point:pp});
   }
   const mr=medianRoute(routes);
   const medPt=fleetPC.add({ position:Cesium.Cartesian3.fromDegrees(START.lon,START.lat,50), pixelSize:9,
     color:Cesium.Color.WHITE, outlineColor:colorA('#f9a826',1), outlineWidth:2,
-    disableDepthTestDistance:Number.POSITIVE_INFINITY });
+    disableDepthTestDistance:DEPTH_OFF_NEAR });
   const medLbl=medianLabelC.add({ position:Cesium.Cartesian3.fromDegrees(START.lon,START.lat,50),
     text:'', font:'11px Fira Code, monospace', fillColor:colorA('#f4f7fc',1),
     showBackground:true, backgroundColor:colorA('#0a0f18',0.7), pixelOffset:new Cesium.Cartesian2(12,-12),
-    disableDepthTestDistance:Number.POSITIVE_INFINITY });
+    disableDepthTestDistance:DEPTH_OFF_NEAR });
   fleetMeta.medianRoute=mr; fleetMeta.medianPoint=medPt; fleetMeta.medianLabel=medLbl;
   document.getElementById('scrubbar').style.display='flex';
   updateScrub();
