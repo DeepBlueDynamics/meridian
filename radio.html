@@ -315,7 +315,7 @@ const CHANNELS = [
 const chByNum = Object.fromEntries(CHANNELS.map(c=>[c.n,c]));
 
 // ── state ──
-let connected=false, squelchOpen=false, currentChannel=null, currentFreq=0;
+let connected=false, squelchOpen=false, currentChannel=null, currentFreq=0, lockedCh=null;
 let signalDb=-100, noiseFloor=-92, audioFlatness=1, lastVoiceTs=null, lastVoiceCh=null;
 let listenOn=false, recordingOn=false, txCount=0;
 const chanState={};   // n -> {signal_db, classification, ts}
@@ -420,7 +420,7 @@ function drawSpectrogram(){
       tR=cR*60*vc|0;tG=cG*80*vc|0;tB=cB*60*vc|0;
     } else if(vc>0.2){ dim=0.5+vc; tR=50*vc|0;tG=30*vc|0; }
     else if(squelchOpen){ dim=0.25; tR=60+80*(0.2-vc)|0; }
-    else { dim=0.06; }
+    else { dim=0.28; } // idle static stays clearly visible — it IS the liveness signal
     for(let y=0;y<specH;y++){
       const fi=((1-y/specH)*N_BINS)|0;
       const bi=Math.min(Math.max(0,fi),N_BINS-1);
@@ -457,7 +457,7 @@ function playSamples(samples){
   if(!audioCtx){ audioCtx=new AudioContext({sampleRate:SR}); playhead=audioCtx.currentTime; }
   const gated=new Float32Array(samples.length);
   for(let i=0;i<samples.length;i++){
-    let s=Math.max(-1,Math.min(1,samples[i]*3));
+    let s=samples[i]; // pre-gain already applied in the audio event handler
     if(lastVc>=VC_GATE||vcGateHang>0){ if(vcGateHang>0)vcGateHang--; vcFadeGain=1; }
     else if(vcFadeGain>0){ vcFadeGain=Math.max(0,vcFadeGain-1/vcFadeLen); s*=vcFadeGain; }
     else s=0;
@@ -488,7 +488,7 @@ function renderChannels(){
       :cls==='carrier'?'<span class="badge b-carrier">CARRIER</span>'
       :'<span class="badge b-static">STATIC</span>';
     const div=document.createElement('div');
-    div.className='chan'+(c.n===currentChannel?' active':'')+(fresh&&cls==='voice'?' voicehit':'');
+    div.className='chan'+(c.n===currentChannel?' active':'')+((fresh&&cls==='voice')||c.n===lockedCh?' voicehit':'');
     div.innerHTML=`<div class="chnum">${c.n}</div>
       <div class="chmeta"><div class="chname">${c.name}</div><div class="chfreq">${c.mhz.toFixed(3)} MHz</div></div>
       <div class="chsig"><div class="bars">${bars}</div>${badge}</div>`;
@@ -497,13 +497,23 @@ function renderChannels(){
   }
 }
 function renderPicker(){
-  const c=chByNum[currentChannel];
+  // Right panel = the user's tap channel; status box = lock state or SCANNING.
+  // Scanning is a STATE, not a channel — nothing flips around without a real
+  // squelch-open transmission.
+  const tap=chByNum[currentChannel];
   $('pickNum').textContent=currentChannel??'—';
-  $('pickName').textContent=c?c.name:'—';
-  $('pickFreq').textContent=currentFreq?fmtMHz(currentFreq):(c?c.mhz.toFixed(3)+' MHz':'—');
-  $('chBig').textContent=currentChannel?('CH '+currentChannel):'—';
-  $('chRole').textContent='ACTIVE'+(c?' · '+c.role:' CHANNEL');
-  $('chFreq').textContent=currentFreq?fmtMHz(currentFreq):(c?c.mhz.toFixed(3)+' MHz · FM':'—');
+  $('pickName').textContent=tap?tap.name:'—';
+  $('pickFreq').textContent=tap?tap.mhz.toFixed(3)+' MHz':'—';
+  const lc=chByNum[lockedCh];
+  if(lockedCh){
+    $('chBig').textContent='CH '+lockedCh;
+    $('chRole').textContent='ACTIVE'+(lc?' · '+lc.role:'');
+    $('chFreq').textContent=lc?lc.mhz.toFixed(3)+' MHz · FM':fmtMHz(currentFreq);
+  }else{
+    $('chBig').textContent=connected?'SCANNING':'—';
+    $('chRole').textContent='WIDEBAND SCAN';
+    $('chFreq').textContent='156.050–157.425 MHz · 48 CH';
+  }
 }
 function renderSignal(){
   $('sigDb').textContent=signalDb>-100?signalDb.toFixed(0)+' dB':'—';
@@ -613,20 +623,26 @@ if(radio){
   radio.onEvent((e)=>{
     switch(e.type){
       case 'conn': setConn(e.open); if(e.open)bootstrap(); break;
-      case 'audio':
-        if(e.channel)currentChannel=e.channel;
-        if(e.freq)currentFreq=e.freq;
-        signalDb=e.signalDb;
-        pushFFT(e.samples); playSamples(e.samples);
+      case 'audio': {
+        if(e.freq)currentFreq=e.freq; // drives spectrogram hue only
+        // Reference applies 3x pre-gain BEFORE the FFT — without it the
+        // spectrogram renders ~10 dB darker than gnosis-radio's at the
+        // same color LUT.
+        const g=e.samples;
+        for(let i=0;i<g.length;i++){ const s=g[i]*3; g[i]=s>1?1:s<-1?-1:s; }
+        pushFFT(g); playSamples(g);
         break;
+      }
       case 'signal_level':
         signalDb=e.signal_db; noiseFloor=e.noise_floor; squelchOpen=e.squelch_open; audioFlatness=e.audio_flatness;
-        if(e.channel)currentChannel=e.channel; if(e.freq)currentFreq=e.freq;
-        renderSignal(); renderPicker();
+        lockedCh=(e.squelch_open&&e.channel)?e.channel:null;
+        if(e.freq)currentFreq=e.freq;
+        renderSignal(); renderPicker(); renderChannels();
         break;
       case 'squelch':
         squelchOpen=e.open;
-        if(e.open){ if(e.channel)currentChannel=e.channel; if(e.freq)currentFreq=e.freq; signalDb=e.signal_db; }
+        lockedCh=e.open?(e.channel||lockedCh):null;
+        if(e.open){ if(e.freq)currentFreq=e.freq; signalDb=e.signal_db; }
         if(e.open&&String(e.classification).toLowerCase()==='voice'){ lastVoiceTs=Date.now(); lastVoiceCh=e.channel; }
         if(e.channel)chanState[e.channel]={signal_db:e.signal_db,classification:e.classification,ts:Date.now()};
         renderSignal(); renderChannels(); renderPicker();
