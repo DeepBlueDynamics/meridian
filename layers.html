@@ -391,8 +391,10 @@ function flowInit() {
   flow = new FlowField($("flowCanvas"));
   flowWind = flow.addLayer({
     numParticles: 14000, maxSpeed: 33,
+    // warm-only ramp: NO blue/cool tones — blue is current's identity, and a
+    // blue-gray low end made slow wind over land read as "current on land".
     colorStops: [
-      { stop: 0.0, color: "rgba(125,140,160,0.85)" }, { stop: 0.30, color: "#9ba8bd" },
+      { stop: 0.0, color: "rgba(190,185,170,0.55)" }, { stop: 0.30, color: "#d8cfa8" },
       { stop: 0.55, color: "#f0e468" }, { stop: 0.78, color: "#f9a826" }, { stop: 1.0, color: "#e94560" }],
     heatmapOpacity: gustOn ? 0.30 : 0, fadeOpacity: 0.972, pointSize: 1.7, dropRate: 0.002, dropRateBump: 0.008,
   });
@@ -400,7 +402,9 @@ function flowInit() {
     numParticles: 9000, maxSpeed: 2.4,
     colorStops: [
       { stop: 0.0, color: "rgba(58,90,140,0.8)" }, { stop: 0.5, color: "#4fa3ff" }, { stop: 1.0, color: "#9ad7ff" }],
-    heatmapOpacity: 0, fadeOpacity: 0.985, pointSize: 1.5,
+    // faster baseline drop: particles that bilinear-leak onto zeroed land
+    // cells stall and must vanish quickly, not linger as beached streaks
+    heatmapOpacity: 0, fadeOpacity: 0.985, pointSize: 1.5, dropRate: 0.008,
   });
   flow.start();
 }
@@ -415,12 +419,21 @@ function prepFlowField(field, h, kind, bounds) {
   const [lonW, latS, lonE, latN] = bounds;
   const u = new Float32Array(NW * NH), v = new Float32Array(NW * NH);
   const LM = window.LandMask, maskLand = kind === "cur" && LM && LM.isReady && LM.isReady();
+  // Sample positions CLAMPED into the fetched field's coverage — viewport
+  // areas beyond the field get nearest-edge extension instead of dead zeros
+  // (zeros made stalled-particle bands and a dark underlay at the edges).
+  const g = field.grid;
+  const gLatMin = g.lat0, gLatMax = g.lat0 + (g.nLat - 1) * g.dLat;
+  const gLonMin = g.lon0, gLonMax = g.lon0 + (g.nLon - 1) * g.dLon;
   for (let r = 0; r < NH; r++) {
     const lat = latN - (r / (NH - 1)) * (latN - latS);
+    const sLat = Math.max(gLatMin, Math.min(gLatMax, lat));
     for (let c = 0; c < NW; c++) {
       const lon = lonW + (c / (NW - 1)) * (lonE - lonW);
+      const sLon = Math.max(gLonMin, Math.min(gLonMax, lon));
       let uu = 0, vv = 0;
-      const s = W.sample(field, lat, lon, h);
+      const s = W.sample(field, sLat, sLon, h);
+      // land test at the TRUE position (not the clamped one)
       if (s && !(maskLand && LM.pointOnLand(lat, lon))) {
         const rad = s.dir * Math.PI / 180;
         if (kind === "wind") { uu = -s.speed * Math.sin(rad); vv = -s.speed * Math.cos(rad); } // FROM → going
@@ -430,6 +443,21 @@ function prepFlowField(field, h, kind, bounds) {
     }
   }
   return { width: NW, height: NH, u, v, bounds };
+}
+// Auto-refetch when the viewport has drifted well past the fetched field —
+// nearest-edge extension covers small pans; big ones need real data.
+let autoRefetching = false;
+function maybeAutoRefetch() {
+  if (autoRefetching || !windField) return;
+  const [lonW, latS, lonE, latN] = flowBounds();
+  const g = windField.grid;
+  const cov = (Math.min(lonE, g.lon0 + (g.nLon - 1) * g.dLon) - Math.max(lonW, g.lon0))
+            * (Math.min(latN, g.lat0 + (g.nLat - 1) * g.dLat) - Math.max(latS, g.lat0));
+  const view = (lonE - lonW) * (latN - latS);
+  if (view > 0 && cov / view < 0.75) {
+    autoRefetching = true;
+    loadFields({ refetch: true }).finally(() => { autoRefetching = false; });
+  }
 }
 function flowInvalidate() { flowWindHour = -1; flowCurHour = -1; }
 function flowUpdate() {
@@ -466,7 +494,7 @@ function updateScrubLabel() {
 
 map.on("load", () => { resample(); render(); });
 map.on("movestart", () => { $("flowCanvas").style.opacity = "0.12"; }); // Windy-style fade during drag
-map.on("moveend", () => { $("flowCanvas").style.opacity = ""; flowInvalidate(); resample(); render(); store.set("view", { center: [map.getCenter().lng, map.getCenter().lat], zoom: map.getZoom() }); });
+map.on("moveend", () => { $("flowCanvas").style.opacity = ""; flowInvalidate(); resample(); render(); maybeAutoRefetch(); store.set("view", { center: [map.getCenter().lng, map.getCenter().lat], zoom: map.getZoom() }); });
 map.on("resize", () => { if (flow) flow.resize(); flowInvalidate(); resample(); render(); });
 
 // ── timeline (spec §6) ────────────────────────────────────────────────────
