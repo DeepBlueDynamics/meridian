@@ -150,6 +150,7 @@
         <button class="toggle-btn cur active" id="curToggle"><span class="dot"></span>Current <strong id="curState">ON</strong><span class="meta" id="curMeta">—</span></button>
         <button class="toggle-btn lbl active" id="lblToggle"><span class="dot"></span>Speed labels <strong id="lblState">ON</strong></button>
         <button class="toggle-btn wind active" id="gustToggle"><span class="dot"></span>Gust shading <strong id="gustState">ON</strong><span class="meta">flow mode</span></button>
+        <button class="toggle-btn cur active" id="chartToggle"><span class="dot"></span>ENC chart <strong id="chartState">ON</strong><span class="meta">Tampa cell</span></button>
       </div>
 
       <div>
@@ -196,6 +197,7 @@
 <script src="lib/topbar.js"></script>
 <script src="lib/api-service.js"></script>
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script src="https://unpkg.com/pmtiles@3.2.1/dist/pmtiles.js"></script>
 <script src="https://unpkg.com/deck.gl@9.0.36/dist.min.js"></script>
 <script src="lib/landmask.js"></script>
 <script src="lib/field.js"></script>
@@ -507,7 +509,57 @@ function updateScrubLabel() {
   $("scrub").value = scrubH;
 }
 
-map.on("load", () => { resample(); render(); });
+// ── ENC chart underlay (spec-chart-style v1 · data from the chart-ingestion
+// pipeline). PMTiles served by the control server's /charts/ route (Range
+// requests — file:// pages can't fetch local files). S-52-flavored on the
+// dark basemap: depth-shaded DEPARE, land, contours, soundings, aids.
+let chartOn = store.get("chart", true);
+const CHART_URL = "pmtiles://http://127.0.0.1:9123/charts/meridian-charts.pmtiles";
+function addChart() {
+  if (!window.pmtiles) return;
+  try { maplibregl.addProtocol("pmtiles", new pmtiles.Protocol().tile); } catch (e) { /* already registered */ }
+  map.addSource("enc", { type: "vector", url: CHART_URL });
+  const before = undefined; // top of basemap; deck overlay + flow canvas sit above anyway
+  map.addLayer({ id: "enc-depare", source: "enc", "source-layer": "DEPARE", type: "fill",
+    paint: { "fill-color": ["step", ["coalesce", ["get", "DRVAL1"], 0],
+      "#1b5276", 2, "#15425f", 5, "#103349", 10, "#0b2536", 20, "#071a28"],
+      "fill-opacity": 0.8 } }, before);
+  map.addLayer({ id: "enc-lndare", source: "enc", "source-layer": "LNDARE", type: "fill",
+    paint: { "fill-color": "#2a2f36", "fill-opacity": 0.95 } });
+  map.addLayer({ id: "enc-depcnt", source: "enc", "source-layer": "DEPCNT", type: "line",
+    paint: { "line-color": "#2e6a8f", "line-width": 0.8, "line-opacity": 0.8 } });
+  map.addLayer({ id: "enc-fairwy", source: "enc", "source-layer": "FAIRWY", type: "line",
+    paint: { "line-color": "#f9a826", "line-width": 1, "line-dasharray": [4, 3], "line-opacity": 0.5 } });
+  map.addLayer({ id: "enc-soundg", source: "enc", "source-layer": "SOUNDG", type: "symbol",
+    minzoom: 11,
+    layout: { "text-field": ["to-string", ["round", ["coalesce", ["get", "DEPTH"], 0]]],
+      "text-size": 9, "text-font": ["Open Sans Regular"], "text-allow-overlap": false },
+    paint: { "text-color": "#7fa8c4", "text-halo-color": "#071a28", "text-halo-width": 1 } });
+  // lateral buoys: S-57 COLOUR "3"=red, "4"=green (first token wins)
+  map.addLayer({ id: "enc-boylat", source: "enc", "source-layer": "BOYLAT", type: "circle",
+    paint: { "circle-radius": 4,
+      "circle-color": ["match", ["slice", ["coalesce", ["get", "COLOUR"], ""], 0, 1], "3", "#e94560", "4", "#6fd6a8", "#f9a826"],
+      "circle-stroke-color": "#fff", "circle-stroke-width": 0.8 } });
+  map.addLayer({ id: "enc-boyspp", source: "enc", "source-layer": "BOYSPP", type: "circle",
+    paint: { "circle-radius": 3, "circle-color": "#f9a826", "circle-stroke-color": "#fff", "circle-stroke-width": 0.6 } });
+  map.addLayer({ id: "enc-lights", source: "enc", "source-layer": "LIGHTS", type: "circle",
+    paint: { "circle-radius": 2.5, "circle-color": "#ffe066", "circle-blur": 0.4 } });
+  map.addLayer({ id: "enc-obstrn", source: "enc", "source-layer": "OBSTRN", type: "circle",
+    paint: { "circle-radius": 3, "circle-color": "rgba(233,69,96,0.7)", "circle-stroke-color": "#e94560", "circle-stroke-width": 1 } });
+  setChartVisibility();
+}
+function setChartVisibility() {
+  for (const l of map.getStyle().layers) {
+    if (l.id.startsWith("enc-")) map.setLayoutProperty(l.id, "visibility", chartOn ? "visible" : "none");
+  }
+}
+
+map.on("load", () => { addChart(); resample(); render(); });
+
+// control hooks for /eval (same convention as routing/radio views)
+window.m = { map, flyTo: (lon, lat, zoom) => map.jumpTo({ center: [lon, lat], zoom }),
+  state: () => ({ zoom: map.getZoom(), center: map.getCenter(), chartOn, vizMode, scrubH,
+    enc: map.getStyle ? map.getStyle().layers.filter(l => l.id.startsWith("enc-")).length : 0 }) };
 map.on("movestart", () => { $("flowCanvas").style.opacity = "0.12"; }); // Windy-style fade during drag
 map.on("moveend", () => { $("flowCanvas").style.opacity = ""; flowInvalidate(); resample(); render(); maybeAutoRefetch(); store.set("view", { center: [map.getCenter().lng, map.getCenter().lat], zoom: map.getZoom() }); });
 map.on("resize", () => { if (flow) flow.resize(); flowInvalidate(); resample(); render(); });
@@ -543,6 +595,7 @@ function bindToggle(btn, stateEl, get, set) {
 bindToggle("windToggle", "windState", () => showWind, v => { showWind = v; store.set("wind", v); });
 bindToggle("curToggle", "curState", () => showCur, v => { showCur = v; store.set("cur", v); });
 bindToggle("lblToggle", "lblState", () => showLbl, v => { showLbl = v; store.set("labels", v); });
+bindToggle("chartToggle", "chartState", () => chartOn, v => { chartOn = v; store.set("chart", v); setChartVisibility(); });
 bindToggle("gustToggle", "gustState", () => gustOn, v => { gustOn = v; store.set("gust", v);
   if (flowWind) flowWind.heatmapOpacity = v ? 0.30 : 0; });
 

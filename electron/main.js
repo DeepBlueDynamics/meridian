@@ -144,6 +144,29 @@ function startControlServer() {
         res.end("ok");
         return;
       }
+      // Local chart data with HTTP Range support — PMTiles readers fetch
+      // byte ranges, and file:// pages can't fetch local files directly.
+      if (url.pathname.startsWith("/charts/") && req.method === "GET") {
+        const name = path.basename(url.pathname);
+        const fp = path.join(__dirname, "..", "charts", name);
+        if (!name.endsWith(".pmtiles") || !fs.existsSync(fp)) { res.statusCode = 404; res.end("not found"); return; }
+        const size = fs.statSync(fp).size;
+        res.setHeader("Accept-Ranges", "bytes");
+        res.setHeader("Content-Type", "application/octet-stream");
+        const m = (req.headers.range || "").match(/bytes=(\d+)-(\d*)/);
+        if (m) {
+          const start = +m[1], end = m[2] ? Math.min(+m[2], size - 1) : size - 1;
+          res.statusCode = 206;
+          res.setHeader("Content-Range", `bytes ${start}-${end}/${size}`);
+          res.setHeader("Content-Length", end - start + 1);
+          fs.createReadStream(fp, { start, end }).pipe(res);
+        } else {
+          res.setHeader("Content-Length", size);
+          fs.createReadStream(fp).pipe(res);
+        }
+        return;
+      }
+
       if (!mainWin || mainWin.isDestroyed()) { res.statusCode = 503; res.end("no window"); return; }
 
       if (url.pathname === "/screenshot") {
