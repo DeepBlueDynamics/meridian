@@ -6,7 +6,7 @@
 **Status:** draft
 **Revised:** 2026-06-11 (UTC)
 **Depends-on:** spec-radio, spec-service-layer
-**Referenced-by:** —
+**Referenced-by:** spec-radio-audit
 **Supersedes:** — (refines spec-radio §3: gnosis-radio was the *reference*, not the shipping shape)
 **License-posture:** Apache-2.0. Vendored Rust derived from gnosis-radio (same author); whisper.cpp (MIT); RTL-SDR via librtlsdr.
 

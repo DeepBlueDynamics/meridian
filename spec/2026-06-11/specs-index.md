@@ -28,6 +28,9 @@ Single source of truth for the spec suite. Every spec carries a `_Revised:` date
 | `spec-extension-model.md` | Plugin-emulation / MCP extension model | uses ACP, functional-analysis |
 | `spec-n2k-interop.md` | NMEA 2000 / Garmin interop (canboat→Signal K) | foundation |
 | `spec-radar.md` | Radar via Mayara (network-boundary sidecar) | Signal K |
+| `spec-radio.md` | VHF radio monitor, transcription & voice control (**active**) | core hub; acp, userdata |
+| `spec-radio-embedded.md` | Embedded radio stack sidecar + Electron supervisor (**draft**) | consumes radio, service-layer |
+| `spec-radio-audit.md` | VHF radio stack security, DSP, and process supervisor audit (**draft**) | depends on radio, radio-embedded |
 
 ## Superseded / prompts / artifacts
 

@@ -6,7 +6,7 @@
 **Status:** active
 **Revised:** 2026-06-11 (UTC) — merged with Meridian app commit 369de01
 **Depends-on:** spec-service-layer, spec-acp-and-search-v2, spec-auth, spec-userdata
-**Referenced-by:** spec-service-layer
+**Referenced-by:** spec-service-layer, spec-radio-audit
 **Supersedes:** —
 **License-posture:** Apache-2.0. Existing `gnosis-radio` Rust crate (RTL-SDR) + existing Meridian Electron app. Transcription model server local; service fallback online. FCC: **listen/transcribe/local-PTT only — never auto-transmit.**
 

@@ -5,6 +5,12 @@ step from `current/AGENT-INSTRUCTIONS.md` §3.7.
 
 ---
 
+## 2026-06-11 (late night) — VHF radio stack audit drop
+
+**Filed:** `spec-radio-audit.md` (draft — VHF radio stack security boundaries, DSP spectrogram rendering, playback jitter, and Electron supervisor analysis). Index updated.
+
+---
+
 ## 2026-06-11 (night) — refactor guidance + route-research pair
 
 **Filed:** `spec-refactor-guidance.md` (draft — css/theme extraction, page
