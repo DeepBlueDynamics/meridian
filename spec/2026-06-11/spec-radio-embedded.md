@@ -70,8 +70,13 @@ control :9080 (`/api/status`, `/channel`, `/recording`, `/listen`,
    — the stock osmocom DLL misdetects the RTL-SDR Blog V4 (R828D) as R820T,
    the PLL never locks (`[R82XX] PLL not locked!`, i2c write failures) and the
    receiver silently sits on noise; (b) **scan mode must broadcast on the WS
-   like monitor mode does** — today wideband scan emits zero WS messages, so
-   every UI renders silence; (c) the squelch noise-floor EMA **tracks
+   like monitor mode does** — IMPLEMENTED in the reference crate 2026-06-11,
+   port verbatim: `always_stream` pipeline flag (continuous demod audio incl.
+   static from a "tap" channel — user-selected via /channel, CH 16 default,
+   slot never auto-removed), ChannelActivity + SignalLevel heartbeats even
+   when idle, lock derived ONLY from squelch-open pipelines (raw FFT
+   detections flipped UIs between noise birdies; scanning reports
+   channel: None and UIs render a SCANNING state); (c) the squelch noise-floor EMA **tracks
    continuous carriers** (NOAA/broadcast never open squelch) — use a frozen /
    min-hold floor or a slow-decay envelope so constant signals are detectable.
    Acceptance: builds in-repo on Windows + Pi (aarch64), runs against an
