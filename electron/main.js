@@ -1,4 +1,4 @@
-import { app, BrowserWindow, protocol, net, ipcMain, shell } from "electron";
+import { app, BrowserWindow, protocol, net, ipcMain, shell, screen } from "electron";
 import http from "node:http";
 import path from "node:path";
 import fs from "node:fs";
@@ -117,6 +117,59 @@ function notifyAuthChanged() {
   try { if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send("meridian:auth-changed"); } catch (e) { /* noop */ }
 }
 
+// ── MCP endpoint (Streamable HTTP, JSON responses) ────────────────────────
+// Lets coding agents drive the app window — sized recordings need exact
+// content dimensions. POST /mcp speaks MCP JSON-RPC; .mcp.json at the repo
+// root registers it with Claude Code. Same loopback-only server as /eval.
+const MCP_PRESETS = {
+  "720p": [1280, 720], "1080p": [1920, 1080], "1440p": [2560, 1440],
+  "4k": [3840, 2160], "square": [1080, 1080], "vertical": [1080, 1920],
+};
+const MCP_TOOLS = [
+  {
+    name: "window_resize",
+    description: "Resize (and optionally move) the Meridian app window. Sizes the CONTENT area by default so screen recordings capture exact pixel dimensions. Pass a preset or explicit width/height. Returns the resulting bounds.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        preset: { type: "string", enum: Object.keys(MCP_PRESETS), description: "Named content size — overrides width/height" },
+        width: { type: "number" }, height: { type: "number" },
+        x: { type: "number", description: "Window position (pass both x and y)" }, y: { type: "number" },
+        center: { type: "boolean", description: "Center on the current display after resizing" },
+        outer: { type: "boolean", description: "Size the whole window incl. titlebar instead of the content area" },
+      },
+    },
+  },
+  {
+    name: "window_bounds",
+    description: "Current Meridian window bounds, content size, and display info (work area, scale factor) — check before/after a recording resize.",
+    inputSchema: { type: "object", properties: {} },
+  },
+];
+function mcpWindowBounds() {
+  const b = mainWin.getBounds();
+  const [cw, ch] = mainWin.getContentSize();
+  const d = screen.getDisplayMatching(b);
+  return { bounds: b, contentSize: { width: cw, height: ch },
+           display: { workArea: d.workArea, size: d.size, scaleFactor: d.scaleFactor } };
+}
+function mcpWindowResize(a = {}) {
+  let w = a.width, h = a.height;
+  if (a.preset) {
+    if (!MCP_PRESETS[a.preset]) throw new Error("unknown preset: " + a.preset);
+    [w, h] = MCP_PRESETS[a.preset];
+  }
+  if (w && h) {
+    if (mainWin.isFullScreen()) mainWin.setFullScreen(false);
+    if (mainWin.isMaximized()) mainWin.unmaximize();
+    if (a.outer) mainWin.setSize(Math.round(w), Math.round(h));
+    else mainWin.setContentSize(Math.round(w), Math.round(h));
+  }
+  if (typeof a.x === "number" && typeof a.y === "number") mainWin.setPosition(Math.round(a.x), Math.round(a.y));
+  else if (a.center) mainWin.center();
+  return mcpWindowBounds();
+}
+
 function startControlServer() {
   const server = http.createServer(async (req, res) => {
     res.setHeader("Access-Control-Allow-Origin", "*");
@@ -167,7 +220,54 @@ function startControlServer() {
         return;
       }
 
+      if (url.pathname === "/mcp" && req.method === "POST") {
+        let body = "";
+        for await (const c of req) body += c;
+        let msg;
+        try { msg = JSON.parse(body); } catch { res.statusCode = 400; res.end(); return; }
+        // notifications (e.g. notifications/initialized) get 202, no body
+        if (msg.method && msg.method.startsWith("notifications/")) { res.statusCode = 202; res.end(); return; }
+        const reply = (result, error) => {
+          res.setHeader("Content-Type", "application/json");
+          res.end(JSON.stringify(error ? { jsonrpc: "2.0", id: msg.id ?? null, error }
+                                       : { jsonrpc: "2.0", id: msg.id ?? null, result }));
+        };
+        if (msg.method === "initialize")
+          return reply({ protocolVersion: (msg.params && msg.params.protocolVersion) || "2025-03-26",
+                         capabilities: { tools: {} }, serverInfo: { name: "meridian-control", version: "1.0.0" } });
+        if (msg.method === "ping") return reply({});
+        if (msg.method === "tools/list") return reply({ tools: MCP_TOOLS });
+        if (msg.method === "tools/call") {
+          const name = msg.params && msg.params.name, args = (msg.params && msg.params.arguments) || {};
+          try {
+            if (!mainWin || mainWin.isDestroyed()) throw new Error("no app window");
+            let out;
+            if (name === "window_resize") out = mcpWindowResize(args);
+            else if (name === "window_bounds") out = mcpWindowBounds();
+            else return reply(null, { code: -32602, message: "unknown tool: " + name });
+            return reply({ content: [{ type: "text", text: JSON.stringify(out) }] });
+          } catch (e) {
+            return reply({ content: [{ type: "text", text: String((e && e.message) || e) }], isError: true });
+          }
+        }
+        return reply(null, { code: -32601, message: "method not found: " + msg.method });
+      }
+      if (url.pathname === "/mcp") { res.statusCode = 405; res.end("POST JSON-RPC only"); return; }
+
       if (!mainWin || mainWin.isDestroyed()) { res.statusCode = 503; res.end("no window"); return; }
+
+      // plain-REST convenience over the same window helpers (curl-friendly)
+      if (url.pathname === "/window") {
+        let out;
+        if (req.method === "POST") {
+          let body = "";
+          for await (const c of req) body += c;
+          out = mcpWindowResize(body ? JSON.parse(body) : {});
+        } else out = mcpWindowBounds();
+        res.setHeader("Content-Type", "application/json");
+        res.end(JSON.stringify({ ok: true, ...out }));
+        return;
+      }
 
       if (url.pathname === "/screenshot") {
         // Renderer-canvas capture is primary: capturePage() returns empty when the
@@ -205,7 +305,7 @@ function startControlServer() {
     }
   });
   server.on("error", (e) => console.error("[control] server error:", e.message));
-  server.listen(CONTROL_PORT, "127.0.0.1", () => console.log(`[control] http://127.0.0.1:${CONTROL_PORT}  (/screenshot /eval /reload)`));
+  server.listen(CONTROL_PORT, "127.0.0.1", () => console.log(`[control] http://127.0.0.1:${CONTROL_PORT}  (/screenshot /eval /reload /window /mcp)`));
 }
 
 const createWindow = () => {
