@@ -5,6 +5,23 @@ step from `current/AGENT-INSTRUCTIONS.md` §3.7.
 
 ---
 
+## 2026-06-11 (later) — radio UI prototype drop
+
+**Filed:** `radio.html` (design prototype, simulated data) → consumed as the
+layout reference for the real `radio.html` built against gnosis-radio's live
+contract (WS :9081 binary PCM + JSON events, control :9080). The real view
+ports the engine from gnosis-radio `src/web.rs` (2048-pt STFT, voice-confidence
+masking, inferno LUT, per-bin noise-floor EMA); sockets live in the preload
+bridge (`window.meridian.radio.*`), page opens none. As-dropped prototype kept
+at `archive/radio-prototype-AS-DROPPED.html`. `scripts/mock-radio.mjs` provides
+a synthetic feed for dev without the dongle.
+
+**⚠ Hardware:** RTL-SDR dongle enumerates (VID 0BDA PID 2838) but both bulk
+interfaces show driver **Error** — needs the WinUSB driver via Zadig before
+`gnosis-radio.exe scan` can open it (`usb_open error -5`). Crate builds clean.
+
+---
+
 ## 2026-06-11 — initial drain (bundle + 2 loose drops)
 
 **Filed:**

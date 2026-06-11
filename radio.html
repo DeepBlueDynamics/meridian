@@ -1,0 +1,616 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>MERIDIAN — VHF Radio</title>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Public+Sans:wght@300;400;500;600;700&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --bg:#0a0f18; --bg-2:#131a26; --line:#1f2a3d; --line-bright:#324863;
+    --ink:#e8ecf3; --ink-dim:#9ba8bd; --ink-faint:#54627c; --ink-fade:#2a3548;
+    --member:#6b9dd9; --envelope:#f9a826; --mean:#f4f7fc;
+    --hot:#e94560; --cool:#4ecdc4; --warn:#ffb938; --voice:#6fd6a8; --blue:#4fa3ff;
+    --serif:'Instrument Serif',serif; --sans:'Public Sans',sans-serif; --mono:'Fira Code',monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100vh;background:var(--bg);color:var(--ink);font-family:var(--sans);overflow:hidden}
+
+  /* ── header / chrome (matches routing.html) ───────────────────────── */
+  header{padding:12px 22px;background:linear-gradient(180deg,#060a13,var(--bg));border-bottom:1px solid var(--line);
+    display:flex;align-items:center;gap:18px}
+  .brand .title{font-family:var(--serif);font-size:26px;color:var(--ink);letter-spacing:.08em;line-height:1}
+  .brand .subtitle{font-family:var(--mono);font-size:9px;letter-spacing:.3em;display:flex;gap:6px;margin-top:2px}
+  .brand .subtitle .deep{color:#fff}
+  .brand .subtitle .blue{color:var(--blue)} .brand .subtitle .dyn{color:var(--ink-dim)}
+  .tabs{display:flex;gap:4px;margin-left:8px}
+  .tab{font-family:var(--mono);font-size:11px;letter-spacing:.18em;color:var(--ink-faint);padding:6px 13px;border:1px solid transparent;border-radius:5px;cursor:pointer;text-decoration:none;text-transform:uppercase}
+  .tab:hover{color:var(--ink-dim)}
+  .tab.active{color:var(--ink);border-color:var(--line-bright);background:rgba(79,163,255,.06)}
+  .spacer{flex:1}
+  .live{font-family:var(--mono);font-size:10px;letter-spacing:.18em;color:var(--ink-dim);display:flex;align-items:center;gap:7px}
+  .live .dot{width:7px;height:7px;border-radius:50%;background:var(--hot)}
+  .live .dot.on{background:var(--voice);box-shadow:0 0 8px var(--voice)}
+
+  /* ── status box row (matches DEP/ARR/DIST) ────────────────────────── */
+  .statusrow{display:flex;gap:9px;padding:10px 22px;border-bottom:1px solid var(--line);align-items:stretch}
+  .rbox,.rdist{display:flex;flex-direction:column;justify-content:center;gap:3px;border:1px solid var(--line-bright);border-radius:5px;padding:5px 13px;background:rgba(10,15,24,.45)}
+  .rlabel{font-family:var(--mono);font-size:9px;letter-spacing:.25em}
+  .rbox.ch .rlabel{color:var(--hot)}
+  .rbox .rplace{font-size:15px;color:var(--ink);font-weight:600;line-height:1.05}
+  .rcoord{font-family:var(--mono);font-size:9px;color:var(--ink-faint)}
+  .rdist{border-color:var(--envelope);background:rgba(249,168,38,.07)}
+  .rdist .rlabel{color:var(--envelope)} .rdist .rplace{font-family:var(--mono);font-size:16px;color:var(--envelope);font-weight:600}
+  .rdist.scan{border-color:var(--cool);background:rgba(78,205,196,.07)} .rdist.scan .rlabel,.rdist.scan .rplace{color:var(--cool)}
+  .rdist.voice{border-color:var(--voice);background:rgba(111,214,168,.07)} .rdist.voice .rlabel,.rdist.voice .rplace{color:var(--voice)}
+  .rsub{font-family:var(--mono);font-size:9px;color:var(--ink-faint)}
+
+  /* ── main 3-column layout ─────────────────────────────────────────── */
+  .grid{display:grid;grid-template-columns:300px 1fr 320px;height:calc(100vh - 53px - 62px - 44px)}
+  .col{overflow:hidden;display:flex;flex-direction:column}
+  .col.scan{border-right:1px solid var(--line)}
+  .col.ctrl{border-left:1px solid var(--line);background:rgba(6,10,19,.4);overflow-y:auto}
+  .colhead{font-family:var(--mono);font-size:9px;letter-spacing:.28em;color:var(--ink-faint);padding:11px 16px 8px}
+
+  /* squelch meter */
+  .sqmeter{position:relative;height:26px;border:1px solid var(--line);border-radius:5px;background:linear-gradient(90deg,#0a1018,#101826);overflow:hidden;margin-bottom:6px}
+  .sqbar{position:absolute;left:0;top:0;bottom:0;width:0%;background:linear-gradient(90deg,rgba(78,205,196,.2),var(--cool));transition:width .1s,background .1s}
+  .sqbar.shut{background:linear-gradient(90deg,rgba(84,98,124,.15),var(--ink-faint))}
+  .sqnoise{position:absolute;top:0;bottom:0;width:2px;background:var(--ink-faint);left:8%}
+  .sqthresh{position:absolute;top:-1px;bottom:-1px;width:2px;background:var(--envelope);left:62%;box-shadow:0 0 6px var(--envelope)}
+  .lamp{font-family:var(--mono);font-size:8px;letter-spacing:.12em;padding:1px 6px;border-radius:3px}
+  .lamp.open{color:var(--voice);border:1px solid rgba(111,214,168,.5);background:rgba(111,214,168,.08)}
+  .lamp.closed{color:var(--ink-faint);border:1px solid var(--ink-fade)}
+
+  /* channel scanner */
+  .chanlist{overflow-y:auto;padding:0 8px 8px}
+  .chan{display:grid;grid-template-columns:40px 1fr 56px;gap:8px;align-items:center;padding:7px 8px;border-radius:5px;border:1px solid transparent;cursor:pointer}
+  .chan:hover{background:rgba(155,168,189,.05)}
+  .chan.active{border-color:var(--line-bright);background:rgba(233,69,96,.06)}
+  .chan.voicehit{border-color:var(--voice);background:rgba(111,214,168,.07)}
+  .chnum{font-family:var(--serif);font-size:20px;color:var(--ink);text-align:center;line-height:1}
+  .chan.active .chnum{color:var(--hot)} .chan.voicehit .chnum{color:var(--voice)}
+  .chmeta .chname{font-size:12px;color:var(--ink);font-weight:500;line-height:1.1}
+  .chmeta .chfreq{font-family:var(--mono);font-size:9px;color:var(--ink-faint)}
+  .chsig{display:flex;flex-direction:column;align-items:flex-end;gap:3px}
+  .bars{display:flex;gap:1.5px;height:14px;align-items:flex-end}
+  .bars i{width:3px;background:var(--ink-fade);border-radius:1px}
+  .badge{font-family:var(--mono);font-size:7.5px;letter-spacing:.12em;padding:1px 4px;border-radius:3px}
+  .b-static{color:var(--ink-faint);border:1px solid var(--ink-fade)}
+  .b-carrier{color:var(--blue);border:1px solid rgba(79,163,255,.4)}
+  .b-voice{color:var(--voice);border:1px solid rgba(111,214,168,.5);background:rgba(111,214,168,.08)}
+  .b-idle{color:var(--ink-fade);border:1px solid transparent}
+
+  /* center: live speech spectrogram + transcript */
+  .center{display:flex;flex-direction:column;min-width:0;position:relative}
+  .waterfall{height:200px;margin:8px 14px 4px;border:1px solid var(--line);border-radius:6px;background:#05080f;position:relative;overflow:hidden}
+  .waterfall .wflabel{position:absolute;top:7px;left:10px;font-family:var(--mono);font-size:8px;letter-spacing:.2em;color:var(--ink-faint);z-index:4;text-shadow:0 0 4px #05080f}
+  .spectro{position:absolute;inset:0;width:100%;height:100%;display:block}
+  .freqaxis{position:absolute;right:6px;top:18px;bottom:10px;z-index:4;display:flex;flex-direction:column;justify-content:space-between;font-family:var(--mono);font-size:7px;color:rgba(180,190,210,.55);text-align:right;text-shadow:0 0 4px #05080f;pointer-events:none}
+  .scope{display:flex;align-items:center;gap:10px;padding:2px 16px 6px;font-family:var(--mono);font-size:9px;color:var(--ink-faint)}
+  .scope b{color:var(--voice);font-weight:500}
+  .scope .ent{color:var(--envelope)}
+  .paintdesc{margin:0 16px 4px;font-size:11px;color:var(--ink-dim);font-style:italic;line-height:1.4;border-left:2px solid var(--envelope);padding-left:9px;min-height:15px}
+
+  .tx-head{font-family:var(--mono);font-size:9px;letter-spacing:.28em;color:var(--ink-faint);padding:6px 16px 4px;border-top:1px solid var(--line)}
+  .transcripts{flex:1;overflow-y:auto;padding:4px 16px 12px}
+  .tx{padding:9px 0;border-bottom:1px solid rgba(31,42,61,.55)}
+  .tx-meta{display:flex;align-items:center;gap:9px;margin-bottom:3px}
+  .tx-time{font-family:var(--mono);font-size:9px;color:var(--ink-faint)}
+  .tx-ch{font-family:var(--mono);font-size:9px;letter-spacing:.1em;color:var(--blue);border:1px solid rgba(79,163,255,.35);border-radius:3px;padding:1px 5px}
+  .tx-ch.d{color:var(--hot);border-color:rgba(233,69,96,.4)}
+  .tx-freq{font-family:var(--mono);font-size:8px;color:var(--ink-faint);margin-left:auto}
+  .tx-text{font-size:13px;color:var(--ink);line-height:1.45}
+  .tx:first-child .tx-text{color:var(--voice)}
+  .tx-empty{font-family:var(--mono);font-size:10px;color:var(--ink-faint);padding:14px 0;letter-spacing:.06em}
+
+  /* offline overlay over the center column */
+  .offline{position:absolute;inset:0;z-index:30;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;
+    background:rgba(10,15,24,.88);backdrop-filter:blur(4px)}
+  .offline.hidden{display:none}
+  .offline .big{font-family:var(--serif);font-size:22px;color:var(--ink)}
+  .offline .sub{font-family:var(--mono);font-size:10px;color:var(--ink-faint);letter-spacing:.14em;text-align:center;line-height:1.8}
+  .offline .sub b{color:var(--ink-dim)}
+
+  /* right: control panel */
+  .ctrlhead{font-family:var(--serif);font-style:italic;font-size:19px;color:var(--ink);padding:13px 18px 2px}
+  .ctrlsub{font-family:var(--mono);font-size:8px;letter-spacing:.22em;color:var(--ink-faint);padding:0 18px 12px}
+  .cgroup{padding:11px 18px;border-top:1px solid var(--line)}
+  .clabel{font-family:var(--mono);font-size:9px;letter-spacing:.22em;color:var(--ink-faint);margin-bottom:8px}
+  .chanpick{display:flex;align-items:center;gap:10px}
+  .chanpick .big{font-family:var(--serif);font-size:30px;color:var(--hot);line-height:1;min-width:48px}
+  .chanpick .pinfo .pn{font-size:12px;color:var(--ink);font-weight:600}
+  .chanpick .pinfo .pf{font-family:var(--mono);font-size:9px;color:var(--ink-faint)}
+  .step{margin-left:auto;display:flex;gap:5px}
+  .step button{width:26px;height:26px;border-radius:5px;border:1px solid var(--line-bright);background:transparent;color:var(--ink-dim);font-size:14px;cursor:pointer}
+  .step button:hover{border-color:var(--ink-dim);color:var(--ink)}
+
+  .toggle{display:flex;align-items:center;justify-content:space-between;padding:9px 0}
+  .toggle .tname{font-size:12px;color:var(--ink-dim)}
+  .sw{width:42px;height:22px;border-radius:12px;border:1px solid var(--line-bright);background:rgba(10,15,24,.6);position:relative;cursor:pointer}
+  .sw i{position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:var(--ink-faint);transition:.15s}
+  .sw.on{border-color:var(--voice);background:rgba(111,214,168,.12)} .sw.on i{left:22px;background:var(--voice)}
+  .sw.rec.on{border-color:var(--hot);background:rgba(233,69,96,.14)} .sw.rec.on i{background:var(--hot)}
+
+  .slider{-webkit-appearance:none;appearance:none;width:100%;height:5px;border-radius:3px;background:var(--ink-fade);outline:none;margin:8px 0 4px}
+  .slider::-webkit-slider-thumb{-webkit-appearance:none;width:13px;height:13px;border-radius:50%;background:var(--envelope);cursor:pointer}
+  .srow{display:flex;justify-content:space-between;font-family:var(--mono);font-size:9px;color:var(--ink-faint)}
+
+  .src{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:10px;color:var(--ink-dim)}
+  .src .sdot{width:8px;height:8px;border-radius:50%;background:var(--voice);box-shadow:0 0 7px var(--voice)}
+  .src .tag{margin-left:auto;font-size:8px;letter-spacing:.15em;color:var(--voice);border:1px solid rgba(111,214,168,.4);border-radius:3px;padding:1px 5px}
+  .logline{font-family:var(--mono);font-size:9px;color:var(--ink-faint);margin-top:6px}
+  .logline b{color:var(--ink-dim);font-weight:500}
+
+  /* ── bottom bar ───────────────────────────────────────────────────── */
+  .voicebar{height:44px;border-top:1px solid var(--line);background:linear-gradient(0deg,#060a13,var(--bg));display:flex;align-items:center;gap:16px;padding:0 22px}
+  .ghost{font-family:var(--mono);font-size:9px;color:var(--ink-faint);letter-spacing:.08em}
+  .ghost b{color:var(--ink-dim)}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <div class="title">MERIDIAN</div>
+    <div class="subtitle"><span><span class="deep">DEEP</span><span class="blue">BLUE</span></span><span class="dyn">DYNAMICS</span></div>
+  </div>
+  <div class="tabs">
+    <a class="tab" href="setup.html">⚙ Setup</a>
+    <a class="tab" href="routing.html">🌊 Routing</a>
+    <a class="tab" href="layers.html">🌬 Layers</a>
+    <a class="tab" href="index.html">🌐 Harbor</a>
+    <a class="tab active" href="radio.html">📻 Radio</a>
+  </div>
+  <div class="spacer"></div>
+  <div class="live"><span class="dot" id="connDot"></span><span id="connText">CONNECTING…</span></div>
+</header>
+
+<!-- status boxes -->
+<div class="statusrow">
+  <div class="rbox ch">
+    <div class="rlabel" id="chRole">ACTIVE CHANNEL</div>
+    <div class="rplace" id="chBig">—</div>
+    <div class="rcoord" id="chFreq">—</div>
+  </div>
+  <div class="rdist scan">
+    <div class="rlabel">RX</div>
+    <div class="rplace" id="rxState">—</div>
+    <div class="rsub" id="rxSub">squelch</div>
+  </div>
+  <div class="rdist">
+    <div class="rlabel">SIGNAL</div>
+    <div class="rplace" id="sigDb">—</div>
+    <div class="rsub" id="noiseDb">noise floor —</div>
+  </div>
+  <div class="rdist voice">
+    <div class="rlabel">LAST VOICE</div>
+    <div class="rplace" id="lastVoice">—</div>
+    <div class="rsub" id="lastVoiceSub">no voice yet</div>
+  </div>
+</div>
+
+<!-- main grid -->
+<div class="grid">
+
+  <!-- LEFT: channel scanner -->
+  <div class="col scan">
+    <div class="colhead">CHANNEL ACTIVITY</div>
+    <div class="chanlist" id="chanlist"></div>
+  </div>
+
+  <!-- CENTER: live speech spectrogram + transcripts -->
+  <div class="col center">
+    <div class="waterfall">
+      <div class="wflabel">SPEECH SPECTROGRAM · 300–3400 Hz · VOICE-CONFIDENCE MASKED</div>
+      <canvas id="spectro" class="spectro"></canvas>
+      <div class="freqaxis"><span>3.4k</span><span>2.4k</span><span>1.4k</span><span>800</span><span>300 Hz</span></div>
+    </div>
+    <div class="paintdesc" id="paintdesc"></div>
+    <div class="scope">
+      <span id="vcLabel">VOICE DETECT —</span><span>·</span>
+      <span class="ent" id="entLabel">H=—</span><span>·</span>
+      <span id="fftLabel">FFT 2048 · HOP 1024 · 48k</span>
+    </div>
+    <div class="tx-head">LIVE TRANSCRIPT · gnosis-radio → local whisper</div>
+    <div class="transcripts" id="transcripts"><div class="tx-empty">No transcriptions yet — they appear after each voice transmission.</div></div>
+
+    <div class="offline" id="offline">
+      <div class="big">Radio offline</div>
+      <div class="sub">gnosis-radio is not reachable on <b>ws://127.0.0.1:9081</b><br/>
+        start it (or <b>node scripts/mock-radio.mjs</b> for a synthetic feed) · retrying every 2 s</div>
+    </div>
+  </div>
+
+  <!-- RIGHT: control -->
+  <div class="col ctrl">
+    <div class="ctrlhead">VHF Control</div>
+    <div class="ctrlsub">RECEIVE · TRANSCRIBE · LOG — NO TRANSMIT</div>
+
+    <div class="cgroup">
+      <div class="clabel">CHANNEL</div>
+      <div class="chanpick">
+        <div class="big" id="pickNum">—</div>
+        <div class="pinfo"><div class="pn" id="pickName">—</div><div class="pf" id="pickFreq">—</div></div>
+        <div class="step"><button id="chDown">−</button><button id="chUp">+</button></div>
+      </div>
+    </div>
+
+    <div class="cgroup">
+      <div class="toggle"><div class="tname">Recording (auto on voice)</div><div class="sw rec" id="recSw"><i></i></div></div>
+      <div class="toggle"><div class="tname">Listen (monitor audio)</div><div class="sw" id="listenSw"><i></i></div></div>
+    </div>
+
+    <div class="cgroup">
+      <div class="clabel">SQUELCH</div>
+      <div class="sqmeter">
+        <div class="sqbar" id="sqbar"></div>
+        <div class="sqnoise" id="sqnoise"></div>
+        <div class="sqthresh" id="sqthresh"></div>
+      </div>
+      <div class="srow"><span id="sqNoiseLbl">— noise</span><span class="lamp closed" id="sqlamp">CLOSED</span><span id="sqSigLbl">— sig</span></div>
+      <div class="clabel" style="margin-top:12px">MARGIN</div>
+      <input class="slider" id="sqSlider" type="range" min="3" max="30" step="1" value="12" />
+      <div class="srow"><span>open</span><span id="sqMarginLbl">+12 dB</span><span>tight</span></div>
+    </div>
+
+    <div class="cgroup">
+      <div class="clabel">TRANSCRIPTION</div>
+      <div class="src"><span class="sdot"></span>Local Whisper · large-v3<span class="tag">LOCAL</span></div>
+      <div class="logline">fallback: <b>service</b> when online · else <b>queue</b></div>
+      <div class="logline">session: <b id="txCount">0</b> transcriptions</div>
+    </div>
+  </div>
+</div>
+
+<!-- bottom bar -->
+<div class="voicebar">
+  <span class="ghost">🎙 voice control — <b>planned</b> (wake word “Meridian” · Act needs one tap · spec-radio §6)</span>
+  <div class="spacer" style="flex:1"></div>
+  <span class="ghost" id="audioState">audio: muted</span>
+</div>
+
+<script src="lib/telemetry.js"></script>
+<script>
+// ════════════════════════════════════════════════════════════════════════
+// Live VHF radio view. Layout follows the design prototype; the DSP/render
+// engine is ported from gnosis-radio's embedded web UI (src/web.rs): client-
+// side 2048-pt STFT over the binary PCM stream, voice-confidence masking,
+// inferno LUT, per-bin noise-floor EMA. Data arrives ONLY through the
+// preload bridge (window.meridian.radio.*) — this page opens no sockets.
+// ════════════════════════════════════════════════════════════════════════
+const radio = window.meridian && window.meridian.radio;
+
+// US marine channel map (subset; matches gnosis-radio channels.rs roles)
+const CHANNELS = [
+  {n:16, name:'Distress / Hailing', mhz:156.800, role:'DISTRESS/HAILING'},
+  {n:9,  name:'Hailing (rec.)',     mhz:156.450, role:'HAILING'},
+  {n:13, name:'Bridge-to-Bridge',   mhz:156.650, role:'BRIDGE-TO-BRIDGE'},
+  {n:22, name:'Coast Guard (22A)',  mhz:157.100, role:'COAST GUARD'},
+  {n:68, name:'Working / Pleasure', mhz:156.425, role:'WORKING'},
+  {n:69, name:'Working / Pleasure', mhz:156.475, role:'WORKING'},
+  {n:71, name:'Working / Pleasure', mhz:156.575, role:'WORKING'},
+  {n:72, name:'Ship-to-Ship',       mhz:156.625, role:'SHIP-TO-SHIP'},
+  {n:70, name:'DSC (digital)',      mhz:156.525, role:'DSC'},
+];
+const chByNum = Object.fromEntries(CHANNELS.map(c=>[c.n,c]));
+
+// ── state ──
+let connected=false, squelchOpen=false, currentChannel=null, currentFreq=0;
+let signalDb=-100, noiseFloor=-92, audioFlatness=1, lastVoiceTs=null, lastVoiceCh=null;
+let listenOn=false, recordingOn=false, txCount=0;
+const chanState={};   // n -> {signal_db, classification, ts}
+
+// ════════════════ FFT engine (ported from gnosis-radio web.rs) ════════════════
+const SR=48000, FFT_N=2048, HOP=1024;
+const VOCAL_LO=300, VOCAL_HI=3400;
+const BIN_HZ=SR/FFT_N, LO_BIN=Math.floor(VOCAL_LO/BIN_HZ), HI_BIN=Math.ceil(VOCAL_HI/BIN_HZ);
+const N_BINS=HI_BIN-LO_BIN;
+const hann=new Float32Array(FFT_N);
+for(let i=0;i<FFT_N;i++)hann[i]=0.5*(1-Math.cos(2*Math.PI*i/(FFT_N-1)));
+const ring=new Float32Array(FFT_N); let rPos=0,hopCnt=FFT_N;
+const fR=new Float32Array(FFT_N),fI=new Float32Array(FFT_N);
+let sgPending=[], lastVc=0;
+const nfBins=new Float32Array(N_BINS).fill(0.01), NF_ALPHA=0.02;
+// inferno-style LUT (boosted saturation), straight from gnosis-radio
+const cLUT=new Uint8Array(768);
+(function(){
+  for(let i=0;i<256;i++){
+    const t=i/255;let r,g,b;
+    if(t<0.10){const s=t/0.10;r=s*20;g=0;b=s*60;}
+    else if(t<0.25){const s=(t-0.10)/0.15;r=20+s*85;g=0;b=60+s*80;}
+    else if(t<0.42){const s=(t-0.25)/0.17;r=105+s*130;g=s*30;b=140-s*50;}
+    else if(t<0.58){const s=(t-0.42)/0.16;r=235+s*20;g=30+s*110;b=90-s*80;}
+    else if(t<0.75){const s=(t-0.58)/0.17;r=255;g=140+s*70;b=10+s*20;}
+    else if(t<0.88){const s=(t-0.75)/0.13;r=255;g=210+s*30;b=30+s*50;}
+    else{const s=(t-0.88)/0.12;r=255;g=240+s*15;b=80+s*175;}
+    cLUT[i*3]=Math.min(255,r|0);cLUT[i*3+1]=Math.min(255,g|0);cLUT[i*3+2]=Math.min(255,b|0);
+  }
+})();
+function fft(re,im){
+  const N=re.length;
+  for(let i=1,j=0;i<N;i++){let b=N>>1;while(j&b){j^=b;b>>=1;}j^=b;
+    if(i<j){let t=re[i];re[i]=re[j];re[j]=t;t=im[i];im[i]=im[j];im[j]=t;}}
+  for(let len=2;len<=N;len<<=1){
+    const a=-2*Math.PI/len,wR=Math.cos(a),wI=Math.sin(a);
+    for(let i=0;i<N;i+=len){let cR=1,cI=0;const h=len>>1;
+      for(let j=0;j<h;j++){const u=i+j,v=u+h;
+        const tR=re[v]*cR-im[v]*cI,tI=re[v]*cI+im[v]*cR;
+        re[v]=re[u]-tR;im[v]=im[u]-tI;re[u]+=tR;im[u]+=tI;
+        const nr=cR*wR-cI*wI;cI=cR*wI+cI*wR;cR=nr;}}}
+}
+function pushFFT(samples){
+  for(let i=0;i<samples.length;i++){
+    ring[rPos]=samples[i];rPos=(rPos+1)%FFT_N;
+    if(--hopCnt<=0){doFFT();hopCnt=HOP;}
+  }
+}
+function doFFT(){
+  for(let i=0;i<FFT_N;i++){fR[i]=ring[(rPos+i)%FFT_N]*hann[i];fI[i]=0;}
+  fft(fR,fI);
+  const m=new Float32Array(N_BINS), mags=new Float32Array(N_BINS);
+  let totalE=0,peakCount=0,geoSum=0,ariSum=0;
+  for(let k=0;k<N_BINS;k++){
+    const idx=k+LO_BIN;
+    const mag=Math.sqrt(fR[idx]*fR[idx]+fI[idx]*fI[idx])/FFT_N;
+    mags[k]=mag;
+    const db=20*Math.log10(Math.max(mag,1e-10));
+    m[k]=Math.max(0,Math.min(1,(db+60)/55));
+    totalE+=mag*mag;ariSum+=mag;geoSum+=Math.log(Math.max(mag,1e-20));
+  }
+  // voice confidence: harmonic peaks + spectral flatness + energy (gnosis-radio)
+  const meanMag=ariSum/N_BINS;
+  for(let k=2;k<N_BINS-2;k++)if(mags[k]>mags[k-1]&&mags[k]>mags[k+1]&&mags[k]>meanMag*2.5)peakCount++;
+  const geoMean=Math.exp(geoSum/N_BINS);
+  const flatness=(ariSum>1e-10)?geoMean/(ariSum/N_BINS):1;
+  let vc=0;
+  if(squelchOpen){
+    vc=Math.min(1,peakCount/8)*0.4+Math.max(0,1-flatness*2)*0.35+Math.min(1,totalE*5000)*0.25;
+  }
+  m.vc=vc;lastVc=vc;
+  if(!squelchOpen)for(let k=0;k<N_BINS;k++)nfBins[k]=nfBins[k]*(1-NF_ALPHA)+m[k]*NF_ALPHA;
+  sgPending.push(m);
+  if(sgPending.length>240)sgPending.splice(0,sgPending.length-240);
+}
+
+// ════════════════ spectrogram renderer (ported, incl. vc masking) ════════════════
+const sgC=document.getElementById('spectro'), sgX=sgC.getContext('2d');
+const dpr=Math.min(2,window.devicePixelRatio||1);
+function sizeCanvas(){ const b=sgC.parentElement; sgC.width=b.clientWidth*dpr; sgC.height=b.clientHeight*dpr;
+  sgX.fillStyle='#05080f'; sgX.fillRect(0,0,sgC.width,sgC.height); }
+sizeCanvas(); new ResizeObserver(sizeCanvas).observe(sgC.parentElement);
+const Z=2*dpr;             // px per STFT column
+let sgColCount=0; const sgTickInterval=Math.round(SR/HOP);
+function freqToHue(freq){ const lo=156050000,hi=157425000;
+  const t=Math.max(0,Math.min(1,(freq-lo)/(hi-lo))); return 120+t*160; }
+function drawSpectrogram(){
+  const w=sgC.width,h=sgC.height;
+  if(!sgPending.length)return;
+  const stripH=4*dpr, specH=h-stripH;
+  while(sgPending.length){
+    const m=sgPending.shift(); const vc=m.vc||0; sgColCount++;
+    sgX.drawImage(sgC,Z,0,w-Z,h,0,0,w-Z,h);
+    sgX.clearRect(w-Z,0,Z,h);
+    // vc masking + tint: voice = freq-tinted bright, weak = amber, static-during-rx = red, idle = dim
+    let dim,tR=0,tG=0,tB=0;
+    if(vc>0.5){ dim=1.0;
+      const hue=freqToHue(currentFreq), hr=(hue%360)/60, hi2=hr|0, hf=hr-hi2;
+      let cR=0,cG=0,cB=0;
+      switch(hi2){case 0:cR=1;cG=hf;break;case 1:cR=1-hf;cG=1;break;case 2:cG=1;cB=hf;break;
+        case 3:cG=1-hf;cB=1;break;case 4:cR=hf;cB=1;break;default:cR=1;cB=1-hf;break;}
+      tR=cR*60*vc|0;tG=cG*80*vc|0;tB=cB*60*vc|0;
+    } else if(vc>0.2){ dim=0.5+vc; tR=50*vc|0;tG=30*vc|0; }
+    else if(squelchOpen){ dim=0.25; tR=60+80*(0.2-vc)|0; }
+    else { dim=0.06; }
+    for(let y=0;y<specH;y++){
+      const fi=((1-y/specH)*N_BINS)|0;
+      const bi=Math.min(Math.max(0,fi),N_BINS-1);
+      const v=m[bi];
+      let vb=Math.min(1,v*1.3);
+      if(!squelchOpen&&v>nfBins[bi]*2&&v>0.03)vb=Math.min(1,vb*1.6);
+      const ci=(Math.max(0,Math.min(255,vb*255))|0)*3;
+      let r=(cLUT[ci]*dim|0)+tR,g=(cLUT[ci+1]*dim|0)+tG,b=(cLUT[ci+2]*dim|0)+tB;
+      if(r>255)r=255;if(g>255)g=255;if(b>255)b=255;
+      sgX.fillStyle='rgb('+r+','+g+','+b+')';
+      sgX.fillRect(w-Z,y,Z,1);
+    }
+    // confidence strip
+    let sr,sg2,sb;
+    if(vc>0.5){sr=0;sg2=(120+135*vc)|0;sb=(20*vc)|0;}
+    else if(vc>0.2){sr=(220*vc)|0;sg2=(160*vc)|0;sb=0;}
+    else if(squelchOpen){sr=(140+100*(0.2-vc))|0;sg2=10;sb=10;}
+    else{sr=8;sg2=8;sb=8;}
+    sgX.fillStyle='rgb('+sr+','+sg2+','+sb+')';
+    sgX.fillRect(w-Z,specH,Z,stripH);
+    if(sgColCount%sgTickInterval===0){
+      sgX.fillStyle='rgba(255,255,255,0.5)';sgX.fillRect(w-Z,specH,Z,stripH);
+      sgX.fillStyle='rgba(255,255,255,0.12)';sgX.fillRect(w-Z,0,1,specH);
+    }
+  }
+}
+(function loop(){ drawSpectrogram(); requestAnimationFrame(loop); })();
+
+// ════════════════ audio playback (listen monitor, vc-gated) ════════════════
+let audioCtx=null, playhead=0;
+const VC_GATE=0.2; let vcGateHang=0; const vcHangSamples=SR*0.4|0, vcFadeLen=SR*0.03|0; let vcFadeGain=0;
+function playSamples(samples){
+  if(!listenOn)return;
+  if(!audioCtx){ audioCtx=new AudioContext({sampleRate:SR}); playhead=audioCtx.currentTime; }
+  const gated=new Float32Array(samples.length);
+  for(let i=0;i<samples.length;i++){
+    let s=Math.max(-1,Math.min(1,samples[i]*3));
+    if(lastVc>=VC_GATE||vcGateHang>0){ if(vcGateHang>0)vcGateHang--; vcFadeGain=1; }
+    else if(vcFadeGain>0){ vcFadeGain=Math.max(0,vcFadeGain-1/vcFadeLen); s*=vcFadeGain; }
+    else s=0;
+    gated[i]=s;
+  }
+  if(lastVc>=VC_GATE)vcGateHang=vcHangSamples;
+  const buf=audioCtx.createBuffer(1,gated.length,SR);
+  buf.copyToChannel(gated,0);
+  const src=audioCtx.createBufferSource(); src.buffer=buf; src.connect(audioCtx.destination);
+  const t=Math.max(audioCtx.currentTime+0.02,playhead);
+  src.start(t); playhead=t+buf.duration;
+}
+
+// ════════════════ DOM wiring ════════════════
+const $=id=>document.getElementById(id);
+function fmtMHz(hz){ return hz?(hz/1e6).toFixed(3)+' MHz · FM':'—'; }
+function renderChannels(){
+  const cl=$('chanlist'); cl.innerHTML='';
+  for(const c of CHANNELS){
+    const st=chanState[c.n]||{};
+    const cls=st.classification?String(st.classification).toLowerCase():null;
+    const fresh=st.ts&&(Date.now()-st.ts<15000);
+    const sig=fresh&&st.signal_db!=null?Math.max(0,Math.min(6,Math.round((st.signal_db+95)/8))):0;
+    const col=cls==='voice'?'var(--voice)':cls==='carrier'?'var(--blue)':'var(--ink-fade)';
+    const bars=Array.from({length:6},(_,i)=>`<i style="height:${4+i*1.7}px;background:${i<sig?col:'var(--ink-fade)'}"></i>`).join('');
+    const badge=!fresh?'<span class="badge b-idle">—</span>'
+      :cls==='voice'?'<span class="badge b-voice">VOICE</span>'
+      :cls==='carrier'?'<span class="badge b-carrier">CARRIER</span>'
+      :'<span class="badge b-static">STATIC</span>';
+    const div=document.createElement('div');
+    div.className='chan'+(c.n===currentChannel?' active':'')+(fresh&&cls==='voice'?' voicehit':'');
+    div.innerHTML=`<div class="chnum">${c.n}</div>
+      <div class="chmeta"><div class="chname">${c.name}</div><div class="chfreq">${c.mhz.toFixed(3)} MHz</div></div>
+      <div class="chsig"><div class="bars">${bars}</div>${badge}</div>`;
+    div.addEventListener('click',()=>setChannel(c.n));
+    cl.appendChild(div);
+  }
+}
+function renderPicker(){
+  const c=chByNum[currentChannel];
+  $('pickNum').textContent=currentChannel??'—';
+  $('pickName').textContent=c?c.name:'—';
+  $('pickFreq').textContent=currentFreq?fmtMHz(currentFreq):(c?c.mhz.toFixed(3)+' MHz':'—');
+  $('chBig').textContent=currentChannel?('CH '+currentChannel):'—';
+  $('chRole').textContent='ACTIVE'+(c?' · '+c.role:' CHANNEL');
+  $('chFreq').textContent=currentFreq?fmtMHz(currentFreq):(c?c.mhz.toFixed(3)+' MHz · FM':'—');
+}
+function renderSignal(){
+  $('sigDb').textContent=signalDb>-100?signalDb.toFixed(0)+' dB':'—';
+  $('noiseDb').textContent='noise floor '+(noiseFloor!=null?noiseFloor.toFixed(0):'—');
+  $('rxState').textContent=squelchOpen?'OPEN':'CLOSED';
+  $('rxSub').textContent=squelchOpen?'receiving':'squelched';
+  const pct=db=>Math.max(0,Math.min(100,(db+100)));
+  $('sqbar').style.width=pct(signalDb)+'%';
+  $('sqbar').classList.toggle('shut',!squelchOpen);
+  $('sqnoise').style.left=pct(noiseFloor)+'%';
+  $('sqthresh').style.left=pct(noiseFloor+parseFloat($('sqSlider').value))+'%';
+  $('sqlamp').textContent=squelchOpen?'OPEN':'CLOSED';
+  $('sqlamp').className='lamp '+(squelchOpen?'open':'closed');
+  $('sqNoiseLbl').textContent=(noiseFloor!=null?noiseFloor.toFixed(0):'—')+' noise';
+  $('sqSigLbl').textContent=(signalDb>-100?signalDb.toFixed(0):'—')+' sig';
+  const lbl=audioFlatness<0.45?'VOICE':audioFlatness<0.55?'SIGNAL':audioFlatness<0.70?'WEAK':'NOISE';
+  $('vcLabel').innerHTML='VOICE DETECT <b>'+(lastVc>0.5?'ON · '+(lastVc*100|0)+'%':lbl)+'</b>';
+  $('entLabel').textContent='H='+audioFlatness.toFixed(2);
+}
+function addTranscript(e,prepend){
+  const tc=$('transcripts');
+  const empty=tc.querySelector('.tx-empty'); if(empty)empty.remove();
+  const isDistress=e.channel===16||e.channel===70;
+  const div=document.createElement('div'); div.className='tx';
+  const t=e.timestamp?String(e.timestamp).replace('T',' ').slice(11,19):new Date().toTimeString().slice(0,8);
+  div.innerHTML=`<div class="tx-meta"><span class="tx-time">${t}</span>
+      <span class="tx-ch ${isDistress?'d':''}">CH ${e.channel??'—'}</span>
+      <span class="tx-freq">${e.freq?(e.freq/1e6).toFixed(3)+' MHz':''}</span></div>
+    <div class="tx-text"></div>`;
+  div.querySelector('.tx-text').textContent=e.text||'';
+  if(prepend)tc.prepend(div);else tc.appendChild(div);
+  while(tc.children.length>200)tc.lastChild.remove();
+  txCount++; $('txCount').textContent=txCount;
+}
+setInterval(()=>{ if(lastVoiceTs){ const s=((Date.now()-lastVoiceTs)/1000)|0;
+  $('lastVoice').textContent=s<60?('0:'+String(s).padStart(2,'0')):((s/60|0)+':'+String(s%60).padStart(2,'0'));
+  $('lastVoiceSub').textContent='CH '+(lastVoiceCh??'—'); } },1000);
+
+// ── controls ──
+async function setChannel(n){ if(!radio)return; try{ await radio.control('/channel',{channel:n}); currentChannel=n; const c=chByNum[n]; if(c)currentFreq=c.mhz*1e6|0; renderPicker(); renderChannels(); }catch(e){} }
+$('chUp').addEventListener('click',()=>{ const i=CHANNELS.findIndex(c=>c.n===currentChannel); setChannel(CHANNELS[(i+1+CHANNELS.length)%CHANNELS.length].n); });
+$('chDown').addEventListener('click',()=>{ const i=CHANNELS.findIndex(c=>c.n===currentChannel); setChannel(CHANNELS[(i-1+CHANNELS.length)%CHANNELS.length].n); });
+$('recSw').addEventListener('click',async()=>{ recordingOn=!recordingOn; $('recSw').classList.toggle('on',recordingOn);
+  try{ await radio.control('/recording',{recording:recordingOn}); }catch(e){} });
+$('listenSw').addEventListener('click',async()=>{ listenOn=!listenOn; $('listenSw').classList.toggle('on',listenOn);
+  $('audioState').textContent='audio: '+(listenOn?'monitoring (vc-gated)':'muted');
+  try{ await radio.control('/listen',{listen:listenOn}); }catch(e){} });
+let sqDeb=null;
+$('sqSlider').addEventListener('input',()=>{ $('sqMarginLbl').textContent='+'+$('sqSlider').value+' dB'; renderSignal();
+  if(sqDeb)clearTimeout(sqDeb); sqDeb=setTimeout(async()=>{ try{ await radio.control('/squelch',{squelch:parseFloat($('sqSlider').value)}); }catch(e){} },300); });
+
+// ── event stream ──
+function setConn(open){
+  connected=open;
+  $('connDot').className='dot'+(open?' on':'');
+  $('connText').textContent=open?'MONITORING · LOCAL SDR':'RADIO OFFLINE';
+  $('offline').classList.toggle('hidden',open);
+}
+if(radio){
+  radio.onEvent((e)=>{
+    switch(e.type){
+      case 'conn': setConn(e.open); if(e.open)bootstrap(); break;
+      case 'audio':
+        if(e.channel)currentChannel=e.channel;
+        if(e.freq)currentFreq=e.freq;
+        signalDb=e.signalDb;
+        pushFFT(e.samples); playSamples(e.samples);
+        break;
+      case 'signal_level':
+        signalDb=e.signal_db; noiseFloor=e.noise_floor; squelchOpen=e.squelch_open; audioFlatness=e.audio_flatness;
+        if(e.channel)currentChannel=e.channel; if(e.freq)currentFreq=e.freq;
+        renderSignal(); renderPicker();
+        break;
+      case 'squelch':
+        squelchOpen=e.open;
+        if(e.open){ if(e.channel)currentChannel=e.channel; if(e.freq)currentFreq=e.freq; signalDb=e.signal_db; }
+        if(e.open&&String(e.classification).toLowerCase()==='voice'){ lastVoiceTs=Date.now(); lastVoiceCh=e.channel; }
+        if(e.channel)chanState[e.channel]={signal_db:e.signal_db,classification:e.classification,ts:Date.now()};
+        renderSignal(); renderChannels(); renderPicker();
+        break;
+      case 'channel_activity':
+        if(e.noise_floor!=null)noiseFloor=e.noise_floor;
+        for(const ci of e.active||[])chanState[ci.channel]={signal_db:ci.signal_db,classification:ci.classification,ts:Date.now()};
+        renderChannels();
+        break;
+      case 'transcription':
+        addTranscript({channel:e.channel,freq:e.freq,text:e.text},true);
+        break;
+      case 'voice_paint':
+        try{ const p=typeof e.painting==='string'?JSON.parse(e.painting):e.painting;
+          $('paintdesc').textContent=p&&(p.description||p.summary)||''; }catch(err){}
+        break;
+    }
+  });
+}else{
+  setConn(false);
+  $('connText').textContent='NO BRIDGE (window.meridian.radio missing)';
+}
+async function bootstrap(){
+  try{
+    const s=await radio.control('/api/status');
+    if(s){
+      if(s.channel)currentChannel=s.channel;
+      if(s.frequency_hz)currentFreq=s.frequency_hz;
+      recordingOn=!!s.recording; $('recSw').classList.toggle('on',recordingOn);
+      listenOn=!!s.listen; $('listenSw').classList.toggle('on',listenOn);
+      $('audioState').textContent='audio: '+(listenOn?'monitoring (vc-gated)':'muted');
+      if(s.signal_db!=null)signalDb=s.signal_db;
+      if(s.noise_floor!=null)noiseFloor=s.noise_floor;
+      squelchOpen=!!s.squelch_open;
+      if(s.audio_flatness!=null)audioFlatness=s.audio_flatness;
+    }
+  }catch(e){}
+  try{
+    const hist=await radio.control('/api/transcriptions');
+    // newest at top: walk the chronological backlog prepending each entry
+    if(Array.isArray(hist))for(const h of hist.slice(-50))addTranscript(h,true);
+  }catch(e){}
+  renderPicker(); renderChannels(); renderSignal();
+}
+renderChannels(); renderPicker(); renderSignal();
+
+// control hooks for /eval (screenshot endpoint falls back to capturePage —
+// this page has no Cesium canvas)
+window.m={ state:()=>({connected,squelchOpen,currentChannel,currentFreq,signalDb,noiseFloor,
+  audioFlatness,lastVc,listenOn,recordingOn,txCount,sgCols:sgColCount}) };
+console.log('[radio] view ready');
+</script>
+</body>
+</html>
