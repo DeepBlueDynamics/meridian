@@ -52,6 +52,17 @@ contextBridge.exposeInMainWorld("meridian", {
   tiles: {
     rootUrl: "app://3dtiles/v1/3dtiles/root.json",
   },
+  // Meridian service auth (loopback login → main persists the JWT).
+  auth: {
+    getToken: () => ipcRenderer.invoke("meridian:auth-token"),
+    logout: () => ipcRenderer.invoke("meridian:auth-logout"),
+    onChange: (cb) => { if (typeof cb === "function") ipcRenderer.on("meridian:auth-changed", () => cb()); },
+  },
+  // Remote-transcription relay control (main owns the :8765 relay).
+  transcribe: {
+    setConfig: (cfg) => ipcRenderer.invoke("meridian:transcribe-config", cfg),
+    onBackend: (cb) => { if (typeof cb === "function") ipcRenderer.on("meridian:transcribe-backend", (_e, b) => cb(b)); },
+  },
   radio: {
     // Subscribe to the radio event stream. Fires {type:"conn",open} immediately,
     // then audio / squelch / signal_level / channel_activity / transcription /

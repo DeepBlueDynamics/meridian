@@ -270,7 +270,11 @@
 
     <div class="cgroup">
       <div class="clabel">TRANSCRIPTION</div>
-      <div class="toggle"><div class="tname">Remote transcription service<span class="stub">STUB</span></div><div class="sw" id="remoteTxSw"><i></i></div></div>
+      <div class="toggle"><div class="tname">Remote transcription service</div><div class="sw" id="remoteTxSw"><i></i></div></div>
+      <div id="remoteTxRow" style="display:none">
+        <div class="src"><span class="sdot"></span>Meridian service · <b id="txBackend" style="color:var(--ink)">idle</b><span class="tag">REMOTE</span></div>
+        <div class="logline" id="txAuthHint"></div>
+      </div>
       <div id="localTxRow">
         <div class="src"><span class="sdot"></span>Local Whisper · small<span class="tag">LOCAL</span></div>
         <div class="logline">whisper.cpp sidecar · Pi-class target (spec pending)</div>
@@ -290,6 +294,7 @@
 
 <script src="lib/telemetry.js"></script>
 <script src="lib/topbar.js"></script>
+<script src="lib/api-service.js"></script>
 <script>
 // ════════════════════════════════════════════════════════════════════════
 // Live VHF radio view. Layout follows the design prototype; the DSP/render
@@ -452,9 +457,10 @@ function drawSpectrogram(){
 // ════════════════ audio playback (listen monitor, vc-gated) ════════════════
 let audioCtx=null, playhead=0;
 const VC_GATE=0.2; let vcGateHang=0; const vcHangSamples=SR*0.4|0, vcFadeLen=SR*0.03|0; let vcFadeGain=0;
+const JITTER_DELAY = 0.15; // 150ms jitter buffer delay to absorb network/GC spikes
 function playSamples(samples){
   if(!listenOn)return;
-  if(!audioCtx){ audioCtx=new AudioContext({sampleRate:SR}); playhead=audioCtx.currentTime; }
+  if(!audioCtx){ audioCtx=new AudioContext({sampleRate:SR}); playhead=audioCtx.currentTime + JITTER_DELAY; }
   const gated=new Float32Array(samples.length);
   for(let i=0;i<samples.length;i++){
     let s=samples[i]; // pre-gain already applied in the audio event handler
@@ -467,7 +473,9 @@ function playSamples(samples){
   const buf=audioCtx.createBuffer(1,gated.length,SR);
   buf.copyToChannel(gated,0);
   const src=audioCtx.createBufferSource(); src.buffer=buf; src.connect(audioCtx.destination);
-  const t=Math.max(audioCtx.currentTime+0.02,playhead);
+  // Reset playhead if we've fallen behind by more than 20ms of buffer margin
+  if(playhead < audioCtx.currentTime + 0.02){ playhead = audioCtx.currentTime + JITTER_DELAY; }
+  const t=playhead;
   src.start(t); playhead=t+buf.duration;
 }
 
@@ -598,18 +606,33 @@ $('retryBtn').addEventListener('click',()=>{
   setTimeout(()=>{ b.classList.remove('busy'); b.textContent='↻ CHECK AGAIN'; },2500);
 });
 
-// ── transcription routing (STUB — remote service spec pending) ──
+// ── transcription routing — LIVE via the main-process :8765 relay, which
+// forwards to the Meridian service /transcribe when the toggle is ON and a
+// JWT exists (spec-service-usage §7; audit A-04 closed). "Save logs
+// remotely" stays a stub pending /userdata.
 const TXCFG=(()=>{ try{ const s=JSON.parse(localStorage.getItem('meridian.transcribe')||'{}');
   return { remote:!!s.remote, saveLogs:!!s.saveLogs }; }catch(e){ return {remote:false,saveLogs:false}; } })();
 function saveTxCfg(){ try{ localStorage.setItem('meridian.transcribe',JSON.stringify(TXCFG)); }catch(e){} }
-function renderTxCfg(){
+async function renderTxCfg(){
   $('remoteTxSw').classList.toggle('on',TXCFG.remote);
   $('remoteLogSw').classList.toggle('on',TXCFG.saveLogs);
   // remote ON → one button is the whole story; the local whisper row hides
   $('localTxRow').style.display=TXCFG.remote?'none':'';
+  $('remoteTxRow').style.display=TXCFG.remote?'':'none';
+  if(window.meridian&&window.meridian.transcribe)
+    window.meridian.transcribe.setConfig({remote:TXCFG.remote,saveLogs:TXCFG.saveLogs});
+  if(TXCFG.remote&&window.meridian&&window.meridian.auth){
+    const t=await window.meridian.auth.getToken();
+    $('txAuthHint').innerHTML=t?'relay :8765 → service /transcribe · transient processing, 1 h expiry'
+      :'⚠ <b style="color:var(--warn)">sign in required</b> — ⚡ SVC chip in the top bar';
+  }
 }
 $('remoteTxSw').addEventListener('click',()=>{ TXCFG.remote=!TXCFG.remote; saveTxCfg(); renderTxCfg(); });
 $('remoteLogSw').addEventListener('click',()=>{ TXCFG.saveLogs=!TXCFG.saveLogs; saveTxCfg(); renderTxCfg(); });
+if(window.meridian&&window.meridian.transcribe)
+  window.meridian.transcribe.onBackend(b=>{ $('txBackend').textContent=b||'—'; });
+if(window.meridian&&window.meridian.auth)
+  window.meridian.auth.onChange(()=>renderTxCfg());
 renderTxCfg();
 
 // ── event stream ──

@@ -104,12 +104,36 @@ function logTelemetry(entry) {
   } catch (e) { console.warn("[telemetry] write failed:", e.message); }
 }
 
+// ── Meridian service auth (spec-service-usage §3) ─────────────────────────
+// Login happens in the SYSTEM browser (nuts-auth magic link / OAuth); the
+// redirect lands here on the loopback control server and the JWT persists in
+// userData. The renderer reads it through the narrow auth bridge — pages
+// never see the redirect flow.
+const authTokenFile = () => path.join(app.getPath("userData"), "meridian-jwt.txt");
+function readAuthToken() {
+  try { const t = fs.readFileSync(authTokenFile(), "utf8").trim(); return t || null; } catch (e) { return null; }
+}
+function notifyAuthChanged() {
+  try { if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send("meridian:auth-changed"); } catch (e) { /* noop */ }
+}
+
 function startControlServer() {
   const server = http.createServer(async (req, res) => {
     res.setHeader("Access-Control-Allow-Origin", "*");
     const url = new URL(req.url, "http://127.0.0.1");
     try {
       if (url.pathname === "/health") { res.end("ok"); return; }
+      if (url.pathname === "/auth-callback") {
+        const token = url.searchParams.get("token") || "";
+        if (token) {
+          try { fs.writeFileSync(authTokenFile(), token); } catch (e) { console.warn("[auth] persist failed:", e.message); }
+          notifyAuthChanged();
+          console.log("[auth] signed in via loopback");
+        }
+        res.setHeader("Content-Type", "text/html; charset=utf-8");
+        res.end(`<!doctype html><body style="font-family:ui-monospace,monospace;background:#0a0f18;color:#e8ecf3;display:flex;align-items:center;justify-content:center;height:100vh;margin:0"><div style="text-align:center"><div style="font-size:22px;margin-bottom:8px">${token ? "Signed in to Meridian" : "No token received"}</div><div style="color:#54627c;font-size:12px">you can close this tab and return to the app</div></div></body>`);
+        return;
+      }
       if (url.pathname === "/telemetry" && req.method === "POST") {
         let body = "";
         for await (const c of req) body += c;
@@ -195,10 +219,91 @@ ipcMain.handle("meridian:open-external", (_e, url) => {
   return false;
 });
 
+// Auth bridge: the renderer reads/clears the persisted service JWT.
+ipcMain.handle("meridian:auth-token", () => readAuthToken());
+ipcMain.handle("meridian:auth-logout", () => {
+  try { fs.unlinkSync(authTokenFile()); } catch (e) { /* already gone */ }
+  notifyAuthChanged();
+  return true;
+});
+
+// ── Remote transcription relay (spec-service-usage §7, audit A-04) ─────────
+// The radio crate POSTs WAVs to a local Whisper server on :8765. This relay
+// IS that server when the user's "Remote transcription service" toggle is ON
+// and a JWT exists: it forwards to the Meridian service /transcribe (same
+// contract — "a resolver only swaps the base URL") and normalizes the one
+// wire difference (service "running" → crate "processing"). Toggle OFF or
+// signed out → 503, which the crate treats as transcriber-unavailable (its
+// existing queue/skip behavior). If a REAL local Whisper already owns :8765,
+// the relay stays out of the way (port-in-use → relay disabled, local wins).
+const SERVICE_BASE = process.env.MERIDIAN_SERVICE_URL || "https://meridian-service-ugcdy6vw7a-uc.a.run.app";
+let transcribeCfg = { remote: false, saveLogs: false };
+ipcMain.handle("meridian:transcribe-config", (_e, cfg) => {
+  if (cfg && typeof cfg === "object") transcribeCfg = { ...transcribeCfg, ...cfg };
+  return transcribeCfg;
+});
+function notifyTranscribeBackend(backend) {
+  try { if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send("meridian:transcribe-backend", backend); } catch (e) { /* noop */ }
+}
+
+function startTranscribeRelay() {
+  const relay = http.createServer(async (req, res) => {
+    res.setHeader("Content-Type", "application/json");
+    const token = readAuthToken();
+    const enabled = transcribeCfg.remote && !!token;
+    const deny = (msg) => { res.statusCode = 503; res.end(JSON.stringify({ status: "failed", error: msg })); };
+    try {
+      if (req.method === "POST" && req.url === "/transcribe") {
+        if (!enabled) return deny(transcribeCfg.remote ? "remote transcription: sign in required" : "remote transcription disabled");
+        const chunks = [];
+        for await (const c of req) chunks.push(c);
+        const upstream = await net.fetch(SERVICE_BASE + "/transcribe", {
+          method: "POST",
+          headers: { "content-type": req.headers["content-type"] || "application/octet-stream", authorization: "Bearer " + token },
+          body: Buffer.concat(chunks),
+        });
+        res.statusCode = upstream.status;
+        res.end(await upstream.text());
+        return;
+      }
+      const mStatus = req.url && req.url.match(/^\/status\/([\w-]+)$/);
+      if (req.method === "GET" && mStatus) {
+        if (!enabled) return deny("remote transcription disabled");
+        const upstream = await net.fetch(`${SERVICE_BASE}/status/${mStatus[1]}`, { headers: { authorization: "Bearer " + token } });
+        let j = {};
+        try { j = await upstream.json(); } catch (e) { /* non-JSON upstream */ }
+        if (j.status === "running") j.status = "processing"; // crate matches queued|processing
+        if (j.backend) notifyTranscribeBackend(j.backend);
+        res.statusCode = upstream.ok ? 200 : upstream.status;
+        res.end(JSON.stringify(j));
+        return;
+      }
+      const mDl = req.url && req.url.match(/^\/download\/([\w-]+)$/);
+      if (req.method === "GET" && mDl) {
+        if (!enabled) return deny("remote transcription disabled");
+        const upstream = await net.fetch(`${SERVICE_BASE}/download/${mDl[1]}`, { headers: { authorization: "Bearer " + token } });
+        res.setHeader("Content-Type", "text/plain; charset=utf-8");
+        res.statusCode = upstream.status;
+        res.end(await upstream.text());
+        return;
+      }
+      res.statusCode = 404; res.end('{"error":"not found"}');
+    } catch (e) {
+      deny("relay error: " + (e && e.message || e));
+    }
+  });
+  relay.on("error", (e) => {
+    if (e.code === "EADDRINUSE") console.log("[transcribe-relay] :8765 already owned (local Whisper?) — relay disabled, local wins");
+    else console.error("[transcribe-relay] error:", e.message);
+  });
+  relay.listen(8765, "127.0.0.1", () => console.log("[transcribe-relay] http://127.0.0.1:8765 → " + SERVICE_BASE + " (gated by remote toggle + JWT)"));
+}
+
 app.whenReady().then(() => {
   registerTilesProxy();
   createWindow();
   startControlServer();
+  startTranscribeRelay();
 });
 
 app.on("window-all-closed", () => { if (process.platform !== "darwin") app.quit(); });
