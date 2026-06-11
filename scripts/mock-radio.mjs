@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Synthetic gnosis-radio for UI development without an RTL-SDR:
+// Synthetic Meridian Radio feed for UI development without an RTL-SDR:
 //   node scripts/mock-radio.mjs
 // Serves the same surface the real crate does — WS broadcast on :9081
 // (binary PCM audio frames + JSON events) and the HTTP control API on :9080.

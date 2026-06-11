@@ -1,26 +1,27 @@
-const { contextBridge } = require("electron");
+const { contextBridge, ipcRenderer } = require("electron");
 
-// ── gnosis-radio bridge (spec-radio §3) ─────────────────────────────────────
+// ── Meridian Radio bridge (spec-radio §3 / spec-radio-embedded) ─────────────
 // The PRELOAD owns the sockets — page code never opens raw connections. It
 // sees a narrow surface: window.meridian.radio.onEvent(cb) for the 9081 WS
 // stream (binary PCM frames decoded here) and .control() for the 9080 HTTP
 // control API. Same key-in-main/narrow-bridge pattern as the tiles proxy.
-// gnosis-radio is a separate process; reconnect forever, fail soft.
+// Meridian Radio runs as an integrated sidecar; reconnect forever, fail soft.
 const RADIO_WS = "ws://127.0.0.1:9081";
 const RADIO_CTRL = "http://127.0.0.1:9080";
 const radioListeners = new Set();
-let radioWs = null, radioConnected = false;
+let radioWs = null, radioConnected = false, radioRetryTimer = null;
 
 function radioEmit(ev) {
   for (const cb of radioListeners) { try { cb(ev); } catch (e) { /* page's problem */ } }
 }
 function radioConnect() {
-  try { radioWs = new WebSocket(RADIO_WS); } catch (e) { setTimeout(radioConnect, 2000); return; }
+  if (radioRetryTimer) { clearTimeout(radioRetryTimer); radioRetryTimer = null; }
+  try { radioWs = new WebSocket(RADIO_WS); } catch (e) { radioRetryTimer = setTimeout(radioConnect, 2000); return; }
   radioWs.binaryType = "arraybuffer";
   radioWs.onopen = () => { radioConnected = true; radioEmit({ type: "conn", open: true }); };
   radioWs.onclose = () => {
     if (radioConnected) { radioConnected = false; radioEmit({ type: "conn", open: false }); }
-    setTimeout(radioConnect, 2000);
+    radioRetryTimer = setTimeout(radioConnect, 2000);
   };
   radioWs.onerror = () => { /* onclose handles retry */ };
   radioWs.onmessage = (e) => {
@@ -44,6 +45,9 @@ radioConnect();
 
 contextBridge.exposeInMainWorld("meridian", {
   isElectron: true,
+  platform: process.platform, // 'win32' | 'darwin' | 'linux' — drives OS-specific setup UI
+  // External links open in the system browser, never navigate the app.
+  openExternal: (url) => ipcRenderer.invoke("meridian:open-external", url),
   // The renderer only learns the proxied root URL — never the key.
   tiles: {
     rootUrl: "app://3dtiles/v1/3dtiles/root.json",
@@ -58,7 +62,14 @@ contextBridge.exposeInMainWorld("meridian", {
       try { cb({ type: "conn", open: radioConnected }); } catch (e) { /* noop */ }
       return () => radioListeners.delete(cb);
     },
-    // Narrow control surface → gnosis-radio :9080.
+    // Immediate retry — e.g. the setup pane's refresh button after a driver
+    // install. Drops any pending backoff and reconnects right now.
+    reconnect: () => {
+      try { if (radioWs) { radioWs.onclose = null; radioWs.close(); } } catch (e) { /* noop */ }
+      if (radioConnected) { radioConnected = false; radioEmit({ type: "conn", open: false }); }
+      radioConnect();
+    },
+    // Narrow control surface → Meridian Radio :9080.
     //   control("/api/status")                      GET
     //   control("/channel", {channel:16})           POST
     //   control("/listen", {listen:true})           POST

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, protocol, net } from "electron";
+import { app, BrowserWindow, protocol, net, ipcMain, shell } from "electron";
 import http from "node:http";
 import path from "node:path";
 import fs from "node:fs";
@@ -187,6 +187,13 @@ const createWindow = () => {
   // DevTools off by default (set MERIDIAN_DEVTOOLS=1 to open it).
   if (process.env.MERIDIAN_DEVTOOLS === "1") win.webContents.openDevTools({ mode: "detach" });
 };
+
+// External links from the renderer (e.g. the driver tool in the radio setup
+// pane) open in the system browser; only http(s) is allowed through.
+ipcMain.handle("meridian:open-external", (_e, url) => {
+  if (typeof url === "string" && /^https?:\/\//i.test(url)) return shell.openExternal(url);
+  return false;
+});
 
 app.whenReady().then(() => {
   registerTilesProxy();
