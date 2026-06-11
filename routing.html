@@ -168,25 +168,16 @@
 </head>
 <body>
 <div id="app">
-  <header>
-    <div class="brand">
-      <div style="display:flex;flex-direction:column;gap:2px;line-height:1;">
-        <div class="title">MERIDIAN</div>
-        <div class="subtitle"><span><span class="deep">DEEP</span><span class="blue">BLUE</span></span><span class="dyn">DYNAMICS</span></div>
-      </div>
-      <div class="route">
-        <div class="rbox dep click" id="depBox" title="Click to change departure port"><span class="rlabel">DEP ▾</span><span class="rplace" id="depPlace">Newport, RI</span><span class="rcoord" id="depCoord">41.49°N · 71.32°W</span></div>
-        <div class="rarrow">→</div>
-        <div class="rbox arr click" id="arrBox" title="Click to change arrival port"><span class="rlabel">ARR ▾</span><span class="rplace" id="arrPlace">St. George's, Bermuda</span><span class="rcoord" id="arrCoord">32.38°N · 64.68°W</span></div>
-        <div class="rdist"><span class="rlabel">DIST</span><span class="rplace" id="distLabel">635 nm</span></div>
-        <div class="rdist wx"><span class="rlabel">WIND</span><span class="rplace" id="windNow">—</span><span class="rsub">at boat · live</span></div>
-        <div class="rdist gust"><span class="rlabel">GUST</span><span class="rplace" id="gustNow">—</span><span class="rsub">at boat · live</span></div>
-      </div>
+  <header data-meridian-header="Routing">
+    <div class="route">
+      <div class="rbox dep click" id="depBox" title="Click to change departure port"><span class="rlabel">DEP ▾</span><span class="rplace" id="depPlace">Newport, RI</span><span class="rcoord" id="depCoord">41.49°N · 71.32°W</span></div>
+      <div class="rarrow">→</div>
+      <div class="rbox arr click" id="arrBox" title="Click to change arrival port"><span class="rlabel">ARR ▾</span><span class="rplace" id="arrPlace">St. George's, Bermuda</span><span class="rcoord" id="arrCoord">32.38°N · 64.68°W</span></div>
+      <div class="rdist"><span class="rlabel">DIST</span><span class="rplace" id="distLabel">635 nm</span></div>
+      <div class="rdist wx"><span class="rlabel">WIND</span><span class="rplace" id="windNow">—</span><span class="rsub">at boat · live</span></div>
+      <div class="rdist gust"><span class="rlabel">GUST</span><span class="rplace" id="gustNow">—</span><span class="rsub">at boat · live</span></div>
     </div>
-    <div class="stamp">
-      <nav data-meridian-nav></nav>
-      <span class="live" id="liveStamp">Fetching live</span>
-    </div>
+    <span class="live" id="liveStamp">Fetching live</span>
   </header>
 
   <div class="port-search" id="portSearch" style="display:none">
@@ -452,8 +443,22 @@ const ENSEMBLE_MODELS=[{slug:'ecmwf_ifs025',name:'ECMWF IFS 0.25° Ensemble',mem
 let activeModel=null;
 async function fetchEnsembleWind(sample){ const modelsToTry=activeModel?[activeModel]:ENSEMBLE_MODELS; let lastErr=null;
   for(const m of modelsToTry){ const url=`https://ensemble-api.open-meteo.com/v1/ensemble?latitude=${sample.lat}&longitude=${sample.lon}&hourly=wind_speed_10m,wind_direction_10m&wind_speed_unit=kn&models=${m.slug}&forecast_days=${m.days}`;
-    try{ const r=await fetch(url); if(!r.ok){ lastErr=new Error(`HTTP ${r.status} from ${m.name}: ${(await r.text()).slice(0,200)}`); continue; } const data=await r.json(); if(data.error){ lastErr=new Error(`${m.name}: ${data.reason||''}`); continue; } if(!activeModel)activeModel=m; return data; }catch(e){ lastErr=e; } }
+    try{ const r=await fetch(url); if(!r.ok){ lastErr=new Error(`HTTP ${r.status} from ${m.name}: ${(await r.text()).slice(0,200)}`);
+        if(r.status===429){ lastErr.quota=true; throw lastErr; } // daily quota is shared across models/hosts — trying the next one just burns time
+        continue; } const data=await r.json(); if(data.error){ lastErr=new Error(`${m.name}: ${data.reason||''}`); continue; } if(!activeModel)activeModel=m; return data; }catch(e){ lastErr=e; if(e.quota)throw e; } }
   throw lastErr||new Error('All ensemble models failed'); }
+
+// Last-good forecast cache (IndexedDB — a full 6-sample ensemble run is several
+// MB, past localStorage). Quota days and offshore offline both land here: route
+// on the last fetched run, clearly stamped as cached, max 26 h old.
+const FCDB={
+  open(){ return new Promise((res,rej)=>{ const q=indexedDB.open('meridian-routing',1);
+    q.onupgradeneeded=()=>q.result.createObjectStore('forecast'); q.onsuccess=()=>res(q.result); q.onerror=()=>rej(q.error); }); },
+  async save(key,val){ try{ const db=await this.open(); await new Promise((res,rej)=>{ const tx=db.transaction('forecast','readwrite');
+    tx.objectStore('forecast').put(val,key); tx.oncomplete=res; tx.onerror=()=>rej(tx.error); }); }catch(e){/* cache is best-effort */} },
+  async load(key){ try{ const db=await this.open(); return await new Promise((res,rej)=>{ const r=db.transaction('forecast').objectStore('forecast').get(key);
+    r.onsuccess=()=>res(r.result||null); r.onerror=()=>rej(r.error); }); }catch(e){ return null; } } };
+const forecastCacheKey=()=>`${START.lat.toFixed(2)},${START.lon.toFixed(2)}->${DEST.lat.toFixed(2)},${DEST.lon.toFixed(2)}`;
 async function fetchAllWinds(){ const bar=document.getElementById('loaderBar'),sub=document.getElementById('loaderSub'),results=[];
   for(let i=0;i<WIND_SAMPLES.length;i++){ sub.textContent=`Wind · sample ${i+1}/${WIND_SAMPLES.length}`; results.push({sample:WIND_SAMPLES[i],data:await fetchEnsembleWind(WIND_SAMPLES[i])}); bar.style.width=((i+1)/WIND_SAMPLES.length*40)+'%'; } return results; }
 async function fetchMarineCurrents(sample){ const url=`https://marine-api.open-meteo.com/v1/marine?latitude=${sample.lat}&longitude=${sample.lon}&hourly=ocean_current_velocity,ocean_current_direction&forecast_days=8&cell_selection=sea`;
@@ -868,15 +873,25 @@ async function loadLiveAndRoute(){
   refreshWindGrid(); // visualization-only — parallel, fail soft
   try{
     // Retry the whole live fetch — single transient failures shouldn't kill it.
-    let windResults;
-    for(let attempt=1;;attempt++){
-      try{
-        loaderText.textContent = attempt>1 ? `Retrying live fetch (${attempt})…` : 'Fetching live ensemble forecast';
-        windResults=await fetchAllWinds();
-        loaderText.textContent='Fetching ocean currents';
-        marineResults=await fetchAllCurrents();
-        break;
-      }catch(e){ if(attempt>=3) throw e; await new Promise(r=>setTimeout(r,1500)); }
+    // Quota errors are terminal for the day; total failure falls back to the
+    // last-good cached run for this passage (max 26 h old) instead of dying.
+    let windResults, cachedRun=null;
+    try{
+      for(let attempt=1;;attempt++){
+        try{
+          loaderText.textContent = attempt>1 ? `Retrying live fetch (${attempt})…` : 'Fetching live ensemble forecast';
+          windResults=await fetchAllWinds();
+          loaderText.textContent='Fetching ocean currents';
+          marineResults=await fetchAllCurrents();
+          break;
+        }catch(e){ if(e.quota||attempt>=3) throw e; await new Promise(r=>setTimeout(r,1500)); }
+      }
+      FCDB.save(forecastCacheKey(),{ts:Date.now(),windResults,marineResults});
+    }catch(fetchErr){
+      const c=await FCDB.load(forecastCacheKey());
+      if(!(c&&c.windResults&&Date.now()-c.ts<26*3600e3)) throw fetchErr;
+      cachedRun=c; windResults=c.windResults; marineResults=c.marineResults;
+      if(window.Telemetry)window.Telemetry.send('routing-cached-fallback',{message:fetchErr.message,ageH:+((Date.now()-c.ts)/3600e3).toFixed(1)});
     }
     currentWindResults=windResults;
     const currentsAvail=marineResults.filter(c=>c.data).length; useCurrents=currentsAvail>0;
@@ -897,7 +912,9 @@ async function loadLiveAndRoute(){
     renderRoutes3D(kept,envelope); updatePanel(kept,envelope,routes.length-kept.length); buildScrubber(kept);
     document.getElementById('liveStamp').className='live';
     const maskNote=(window.LandMask&&window.LandMask.isReady())?'':' · boxes-only mask';
-    document.getElementById('liveStamp').textContent=`Live · ${fd.getUTCDate()} ${MON[fd.getUTCMonth()]} ${String(fd.getUTCHours()).padStart(2,'0')}Z${maskNote}`;
+    document.getElementById('liveStamp').textContent=cachedRun
+      ? `Cached forecast · ${((Date.now()-cachedRun.ts)/3600e3).toFixed(0)}h old`
+      : `Live · ${fd.getUTCDate()} ${MON[fd.getUTCMonth()]} ${String(fd.getUTCHours()).padStart(2,'0')}Z${maskNote}`;
     renderBoatList(); updateDepClock();
     const cBtn=document.getElementById('currentsToggle'),cState=document.getElementById('currentsState'),cSrc=document.getElementById('currentsSource');
     if(currentsAvail===0){ cBtn.classList.remove('active'); cBtn.disabled=true; cState.textContent='UNAVAIL'; cSrc.textContent='No data'; cBtn.onclick=null; }
@@ -907,8 +924,20 @@ async function loadLiveAndRoute(){
   }catch(err){ console.error(err);
     if(window.Telemetry)window.Telemetry.send('live-fetch-failed',{message:err.message,stack:err.stack,
       dep:START.name,arr:DEST.name,depCoord:[START.lat,START.lon],arrCoord:[DEST.lat,DEST.lon],depAnchor,arrAnchor});
-    loader.querySelector('.ring').style.display='none'; loaderText.textContent='Routing failed'; loaderSub.textContent='';
-    const e=document.createElement('div'); e.className='err-detail'; e.innerHTML=`<strong>Error:</strong> ${err.message.replace(/</g,'&lt;')}`; loader.appendChild(e);
+    loader.querySelector('.ring').style.display='none'; loaderSub.textContent='';
+    const e=document.createElement('div'); e.className='err-detail';
+    if(err.quota){
+      const now=Date.now(),d=new Date(now);
+      const min=Math.ceil((Date.UTC(d.getUTCFullYear(),d.getUTCMonth(),d.getUTCDate()+1)-now)/60000);
+      loaderText.textContent='Forecast quota reached';
+      e.innerHTML=`<strong>Open-Meteo free daily request limit reached.</strong> It resets at 00:00 UTC — `+
+        `about ${min<120?min+' min':Math.round(min/60)+' h'} from now. No cached forecast exists for this passage yet; `+
+        `routing will work again after the reset (and the run will be cached for next time).`;
+    }else{
+      loaderText.textContent='Routing failed';
+      e.innerHTML=`<strong>Error:</strong> ${err.message.replace(/</g,'&lt;')}`;
+    }
+    loader.appendChild(e);
     document.getElementById('liveStamp').className='err'; document.getElementById('liveStamp').textContent='Connection failed'; }
 }
 let windGridRetryTimer=null;

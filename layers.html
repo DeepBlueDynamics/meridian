@@ -253,7 +253,12 @@ function setStamp(cls, txt) { const el = $("liveStamp"); el.className = "live " 
 
 async function loadFields({ refetch = false } = {}) {
   const loader = $("loader"), lt = $("loaderText"), ls = $("loaderSub");
-  loader.style.display = "flex";
+  // Only block the view when there is nothing to show yet. Auto-refetches
+  // (pan past field coverage) keep the old field animating and report in the
+  // corner stamp instead — the full-screen loader killed panning.
+  const blocking = !(windField && curField);
+  if (blocking) loader.style.display = "flex";
+  else setStamp("cached", "Updating field for view");
   let fromCache = false;
 
   if (!refetch) {            // boot: cached field paints instantly if present
@@ -561,7 +566,20 @@ window.m = { map, flyTo: (lon, lat, zoom) => map.jumpTo({ center: [lon, lat], zo
   state: () => ({ zoom: map.getZoom(), center: map.getCenter(), chartOn, vizMode, scrubH,
     enc: map.getStyle ? map.getStyle().layers.filter(l => l.id.startsWith("enc-")).length : 0 }) };
 map.on("movestart", () => { $("flowCanvas").style.opacity = "0.12"; }); // Windy-style fade during drag
-map.on("moveend", () => { $("flowCanvas").style.opacity = ""; flowInvalidate(); resample(); render(); maybeAutoRefetch(); store.set("view", { center: [map.getCenter().lng, map.getCenter().lat], zoom: map.getZoom() }); });
+// Repaint/refetch only once the camera has been still for a beat — pans chain
+// (moveend fires between drags), and doing the work immediately repainted and
+// kicked off field fetches mid-scroll. Flow stays faded until the repaint so
+// stale-positioned particles never flash at full strength.
+let moveIdleT = null;
+map.on("moveend", () => {
+  store.set("view", { center: [map.getCenter().lng, map.getCenter().lat], zoom: map.getZoom() });
+  if (moveIdleT) clearTimeout(moveIdleT);
+  moveIdleT = setTimeout(() => {
+    moveIdleT = null;
+    $("flowCanvas").style.opacity = "";
+    flowInvalidate(); resample(); render(); maybeAutoRefetch();
+  }, 2500);
+});
 map.on("resize", () => { if (flow) flow.resize(); flowInvalidate(); resample(); render(); });
 
 // ── timeline (spec §6) ────────────────────────────────────────────────────
