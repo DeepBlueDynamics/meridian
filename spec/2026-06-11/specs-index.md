@@ -15,6 +15,9 @@ Single source of truth for the spec suite. Every spec carries a `_Revised:` date
 | `spec-service-usage.md` | Deployed-service contract: nuts-auth, Agent Card, /a2a skills, tiles split, /transcribe (**the integrator's contract**) | consumes service-layer; frontend checklist §10 |
 | `spec-signalk.md` | Signal K client bridge + boat-data simulator (**draft**) | live-at-boat overlay, instruments, graph-any-path |
 | `spec-hyperia-integration.md` | Hyperia sidecar = standalone agent + sticky notes (**draft**) | ACP Act → consent grants; port 9800 |
+| `spec-route-research.md` | Route research product: crawl + summarize what's along a passage (**draft**, backend) | grub/Lume; feeds route-research-frontend |
+| `spec-route-research-frontend.md` | From/To picker, route variants, along-the-way itinerary on ROUTING view (**draft**) | consumes route-research via bridge |
+| `spec-refactor-guidance.md` | Codebase modularization: css/theme, page controllers, api-service consolidation (**draft**) | guides all frontend work |
 | `spec-auth.md` | Nuts Auth JWTs — one token across service/ACP/Shivvr/grubcrawler | underpins every endpoint |
 | `spec-google-3d-tiles.md` | Google 3D Tiles ToS + proxy (the referenced `spec.md`) | `/tiles`; quota by `sub` |
 | `spec-wind-current-layers-v2.md` | Wind + current layers + the **shared `Field` model** (**current**, implemented) | supersedes `spec-wind-current-layers.md`; load-bearing: `/weather`,`/ocean`,`/bathy` all return `Field` |

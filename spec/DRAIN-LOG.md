@@ -5,6 +5,24 @@ step from `current/AGENT-INSTRUCTIONS.md` §3.7.
 
 ---
 
+## 2026-06-11 (night) — refactor guidance + route-research pair
+
+**Filed:** `spec-refactor-guidance.md` (draft — css/theme extraction, page
+controllers under js/controllers/, lib/api-service.js consolidation, header
+templating, JSDoc passes; acceptance = pixel-perfect). Its ES-modules open
+question RESOLVED in place from field experience: file:// blocks ES module
+imports (flow-field.js had to be converted) — controllers stay classic
+scripts until pages move to an app:// origin. `spec-route-research.md` +
+`spec-route-research-frontend.md` (drafts — backend crawl/summarize product +
+the ROUTING-view From/To, route variants, along-the-way itinerary that
+consumes it via the main-process bridge). Index updated; zip archived.
+
+**Sequencing note:** api-service consolidation overlaps Workstream B
+(lib/service.js) — fold together. route-research-frontend blocks on the
+backend skill (other agent). Full refactor pass timing = owner decision.
+
+---
+
 ## 2026-06-11 (evening) — service-usage + signalk + hyperia + viz/charts drops
 
 **Filed:** `spec-service-usage.md` (active — the deployed service contract:
