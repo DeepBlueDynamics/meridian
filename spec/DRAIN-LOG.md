@@ -5,6 +5,25 @@ step from `current/AGENT-INSTRUCTIONS.md` §3.7.
 
 ---
 
+## 2026-06-11 (evening) — service-usage + signalk + hyperia + viz/charts drops
+
+**Filed:** `spec-service-usage.md` (active — the deployed service contract:
+nuts-auth login, Agent Card, `/a2a` JSON-RPC skills with error semantics,
+google/free tile caching split, **`/transcribe` contract** that the radio's
+remote toggle stubs await; frontend checklist in §10), `spec-signalk.md`
+(draft — Electron-main Signal K client bridge + a first-class **boat
+simulator**, "build early"), `spec-hyperia-integration.md` (draft — Hyperia
+sidecar on :9800 as the standalone agent; sticky notes as panes; ACP Act →
+consent grants). Index updated.
+
+**Artifacts:** `windcurrentviz.zip` → `archive/` (Windy-style GPU particle
+flow-field engine — flow-field.js, zero-dep, with demo + README — the LAYERS
+view upgrade); `meridian-charts.pmtiles` → repo `charts/` (S-57 ENC PMTiles,
+San Diego cell — chart-style underlay data; *.pmtiles is gitignored).
+`spec-google-3d-tiles.md` was byte-identical to the filed copy — dropped.
+
+---
+
 ## 2026-06-11 (later still) — authored `spec-radio-embedded.md` (draft)
 
 Owner direction: gnosis-radio was a REFERENCE; all radio code moves into this

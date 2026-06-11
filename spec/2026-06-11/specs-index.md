@@ -12,6 +12,9 @@ Single source of truth for the spec suite. Every spec carries a `_Revised:` date
 |---|---|---|
 | `spec-service-layer.md` | Cloud Run backbone: proxy + compute + ACP exposure | core hub; auth, acp, fleet, tiles, layers all plug in |
 | `spec-acp-and-search-v2.md` | ACP contract + combined Shivvr/Lume search (**current**) | supersedes `spec-acp-and-search.md`; MCP/ACP fork RESOLVED §A6 |
+| `spec-service-usage.md` | Deployed-service contract: nuts-auth, Agent Card, /a2a skills, tiles split, /transcribe (**the integrator's contract**) | consumes service-layer; frontend checklist §10 |
+| `spec-signalk.md` | Signal K client bridge + boat-data simulator (**draft**) | live-at-boat overlay, instruments, graph-any-path |
+| `spec-hyperia-integration.md` | Hyperia sidecar = standalone agent + sticky notes (**draft**) | ACP Act → consent grants; port 9800 |
 | `spec-auth.md` | Nuts Auth JWTs — one token across service/ACP/Shivvr/grubcrawler | underpins every endpoint |
 | `spec-google-3d-tiles.md` | Google 3D Tiles ToS + proxy (the referenced `spec.md`) | `/tiles`; quota by `sub` |
 | `spec-wind-current-layers-v2.md` | Wind + current layers + the **shared `Field` model** (**current**, implemented) | supersedes `spec-wind-current-layers.md`; load-bearing: `/weather`,`/ocean`,`/bathy` all return `Field` |
