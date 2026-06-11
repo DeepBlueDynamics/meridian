@@ -159,17 +159,40 @@
   .voicebar{height:44px;border-top:1px solid var(--line);background:linear-gradient(0deg,#060a13,var(--bg));display:flex;align-items:center;gap:16px;padding:0 22px}
   .ghost{font-family:var(--mono);font-size:9px;color:var(--ink-faint);letter-spacing:.08em}
   .ghost b{color:var(--ink-dim)}
+
+  /* logbook panel styling */
+  .colhead-tabs{display:flex;border-bottom:1px solid var(--line);background:rgba(6,10,19,.2)}
+  .tab-btn{flex:1;background:transparent;border:none;border-bottom:2px solid transparent;color:var(--ink-faint);
+    font-family:var(--mono);font-size:9px;letter-spacing:.25em;text-transform:uppercase;padding:12px 10px 10px;
+    cursor:pointer;text-align:center;transition:all .2s;outline:none}
+  .tab-btn:hover{color:var(--ink-dim);background:rgba(155,168,189,.03)}
+  .tab-btn.active{color:var(--envelope);border-bottom-color:var(--envelope);background:rgba(249,168,38,.03)}
+  .tab-content{flex:1;display:flex;flex-direction:column;overflow:hidden}
+  .tab-content.hidden{display:none}
+  
+  .loglist{overflow-y:auto;padding:8px;flex:1;display:flex;flex-direction:column;gap:6px}
+  .log-item{padding:10px 12px;border:1px solid var(--line);border-radius:6px;
+    background:linear-gradient(135deg, rgba(10,15,24,0.6), rgba(16,24,37,0.3));
+    border-left:3px solid var(--line-bright);transition:all .2s ease;
+    display:flex;flex-direction:column;gap:6px;position:relative}
+  .log-item:hover{border-color:var(--line-bright);background:linear-gradient(135deg, rgba(16,24,37,0.7), rgba(24,37,56,0.4));
+    transform:translateX(2px)}
+  .log-item.distress{border-left-color:var(--hot);background:rgba(233,69,96,0.04)}
+  .log-item.distress:hover{background:rgba(233,69,96,0.07)}
+  .log-item.voice{border-left-color:var(--voice)}
+  
+  .log-meta{display:flex;align-items:center;gap:10px;font-family:var(--mono);font-size:9px}
+  .log-time{color:var(--ink-faint)}
+  .log-ch{color:var(--blue);font-weight:600;padding:1px 5px;border:1px solid rgba(79,163,255,0.25);border-radius:3px}
+  .log-ch.d{color:var(--hot);border-color:rgba(233,69,96,0.3)}
+  .log-freq{color:var(--ink-faint)}
+  .log-text{font-size:12px;color:var(--ink-dim);line-height:1.4;word-wrap:break-word;font-weight:400}
+  .log-empty{font-family:var(--mono);font-size:9px;color:var(--ink-faint);padding:14px;text-align:center;letter-spacing:.06em}
 </style>
 </head>
 <body>
 
-<header>
-  <div class="brand">
-    <div class="title">MERIDIAN</div>
-    <div class="subtitle"><span><span class="deep">DEEP</span><span class="blue">BLUE</span></span><span class="dyn">DYNAMICS</span></div>
-  </div>
-  <nav data-meridian-nav style="margin-left:8px"></nav>
-  <div class="spacer"></div>
+<header data-meridian-header="Radio">
   <div class="live"><span class="dot" id="connDot"></span><span id="connText">CONNECTING…</span></div>
 </header>
 
@@ -200,10 +223,24 @@
 <!-- main grid -->
 <div class="grid">
 
-  <!-- LEFT: channel scanner -->
+  <!-- LEFT: channel scanner / logbook tabs -->
   <div class="col scan">
-    <div class="colhead">CHANNEL ACTIVITY</div>
-    <div class="chanlist" id="chanlist"></div>
+    <div class="colhead-tabs">
+      <button class="tab-btn active" id="tabScan">Scanner</button>
+      <button class="tab-btn" id="tabLogbook">Logbook</button>
+    </div>
+    
+    <div class="tab-content" id="scanWrapper">
+      <div class="chanlist" id="chanlist"></div>
+    </div>
+    
+    <div class="tab-content hidden" id="logbookWrapper">
+      <div style="padding: 8px 12px; display: flex; gap: 8px; border-bottom: 1px solid var(--line); align-items: center; background: rgba(10,15,24,0.3);">
+        <input type="text" id="logSearch" placeholder="Filter transcripts..." style="flex: 1; background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 5px 8px; font-family: var(--mono); font-size: 10px; color: var(--ink); outline: none;" />
+        <button id="clearLogsBtn" style="background: transparent; border: 1px solid var(--line); border-radius: 4px; padding: 5px 8px; font-family: var(--mono); font-size: 10px; color: var(--hot); cursor: pointer;" title="Clear logs">CLEAR</button>
+      </div>
+      <div class="loglist" id="logList"></div>
+    </div>
   </div>
 
   <!-- CENTER: live speech spectrogram + transcripts -->
@@ -461,6 +498,9 @@ const JITTER_DELAY = 0.15; // 150ms jitter buffer delay to absorb network/GC spi
 function playSamples(samples){
   if(!listenOn)return;
   if(!audioCtx){ audioCtx=new AudioContext({sampleRate:SR}); playhead=audioCtx.currentTime + JITTER_DELAY; }
+  if(audioCtx.state === 'suspended') {
+    audioCtx.resume();
+  }
   const gated=new Float32Array(samples.length);
   for(let i=0;i<samples.length;i++){
     let s=samples[i]; // pre-gain already applied in the audio event handler
@@ -473,10 +513,20 @@ function playSamples(samples){
   const buf=audioCtx.createBuffer(1,gated.length,SR);
   buf.copyToChannel(gated,0);
   const src=audioCtx.createBufferSource(); src.buffer=buf; src.connect(audioCtx.destination);
-  // Reset playhead if we've fallen behind by more than 20ms of buffer margin
-  if(playhead < audioCtx.currentTime + 0.02){ playhead = audioCtx.currentTime + JITTER_DELAY; }
-  const t=playhead;
-  src.start(t); playhead=t+buf.duration;
+  
+  // Self-correcting playhead scheduling
+  let t = playhead;
+  // 1. Underflow correction: if we fall behind, schedule as close to current time as possible
+  if (t < audioCtx.currentTime + 0.01) {
+    t = audioCtx.currentTime + 0.01;
+  }
+  // 2. Overflow/latency cap: if we get too far ahead (e.g. after page hides or suspend), reset to target delay
+  if (t > audioCtx.currentTime + JITTER_DELAY + 0.15) {
+    t = audioCtx.currentTime + JITTER_DELAY;
+  }
+  
+  src.start(t);
+  playhead = t + buf.duration;
 }
 
 // ════════════════ DOM wiring ════════════════
@@ -555,6 +605,126 @@ function addTranscript(e,prepend){
   if(prepend)tc.prepend(div);else tc.appendChild(div);
   while(tc.children.length>200)tc.lastChild.remove();
   txCount++; $('txCount').textContent=txCount;
+}
+function escapeHtml(str) {
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+function savePersistentLog(e) {
+  let log = [];
+  try {
+    const raw = localStorage.getItem('meridian.radio.persistent_log');
+    if (raw) log = JSON.parse(raw);
+  } catch (err) {}
+  if (!Array.isArray(log)) log = [];
+  
+  const entry = {
+    channel: e.channel,
+    freq: e.freq,
+    text: e.text,
+    timestamp: e.timestamp || new Date().toISOString()
+  };
+  
+  log.push(entry);
+  if (log.length > 100) {
+    log = log.slice(log.length - 100);
+  }
+  
+  try {
+    localStorage.setItem('meridian.radio.persistent_log', JSON.stringify(log));
+  } catch (err) {}
+  
+  renderLogbook();
+}
+function renderLogbook() {
+  const logList = $('logList');
+  if (!logList) return;
+  
+  let log = [];
+  try {
+    const raw = localStorage.getItem('meridian.radio.persistent_log');
+    if (raw) log = JSON.parse(raw);
+  } catch (err) {}
+  if (!Array.isArray(log)) log = [];
+  
+  const query = ($('logSearch')?.value || '').toLowerCase().trim();
+  
+  const filtered = log.filter(item => {
+    if (!query) return true;
+    const chStr = `ch ${item.channel || ''}`.toLowerCase();
+    const textStr = (item.text || '').toLowerCase();
+    const freqStr = item.freq ? (item.freq / 1e6).toFixed(3).toLowerCase() : '';
+    return chStr.includes(query) || textStr.includes(query) || freqStr.includes(query);
+  });
+  
+  if (filtered.length === 0) {
+    logList.innerHTML = `<div class="log-empty">${query ? 'No matching logs' : 'No logs recorded'}</div>`;
+    return;
+  }
+  
+  logList.innerHTML = filtered.slice().reverse().map(item => {
+    const isDistress = item.channel === 16 || item.channel === 70;
+    const isVoice = item.channel !== 70;
+    const logClass = isDistress ? 'distress' : (isVoice ? 'voice' : '');
+    const t = item.timestamp ? (item.timestamp.includes('T') ? item.timestamp.replace('T', ' ').slice(11, 19) : item.timestamp.slice(0, 8)) : new Date().toTimeString().slice(0, 8);
+    const freqStr = item.freq ? (item.freq / 1e6).toFixed(3) + ' MHz' : '';
+    return `
+      <div class="log-item ${logClass}">
+        <div class="log-meta">
+          <span class="log-time">[${t}]</span>
+          <span class="log-ch ${isDistress ? 'd' : ''}">CH ${item.channel ?? '—'}</span>
+          ${freqStr ? `<span class="log-freq">${freqStr}</span>` : ''}
+        </div>
+        <div class="log-text">${escapeHtml(item.text || '')}</div>
+      </div>
+    `;
+  }).join('');
+}
+function initTabs() {
+  const tabScan = $('tabScan');
+  const tabLogbook = $('tabLogbook');
+  const scanWrapper = $('scanWrapper');
+  const logbookWrapper = $('logbookWrapper');
+  const clearLogsBtn = $('clearLogsBtn');
+  
+  function setTab(tabName) {
+    if (tabName === 'scan') {
+      tabScan.classList.add('active');
+      tabLogbook.classList.remove('active');
+      scanWrapper.classList.remove('hidden');
+      logbookWrapper.classList.add('hidden');
+      if (clearLogsBtn) clearLogsBtn.style.display = 'none';
+    } else {
+      tabScan.classList.remove('active');
+      tabLogbook.classList.add('active');
+      scanWrapper.classList.add('hidden');
+      logbookWrapper.classList.remove('hidden');
+      if (clearLogsBtn) clearLogsBtn.style.display = 'block';
+      renderLogbook();
+    }
+  }
+  
+  tabScan.addEventListener('click', () => setTab('scan'));
+  tabLogbook.addEventListener('click', () => setTab('logbook'));
+  
+  setTab('scan');
+  
+  if (clearLogsBtn) {
+    clearLogsBtn.addEventListener('click', () => {
+      if (confirm('Clear all local persistent transcripts?')) {
+        try {
+          localStorage.removeItem('meridian.radio.persistent_log');
+        } catch (err) {}
+        renderLogbook();
+      }
+    });
+  }
+  
+  const logSearch = $('logSearch');
+  if (logSearch) {
+    logSearch.addEventListener('input', () => {
+      renderLogbook();
+    });
+  }
 }
 setInterval(()=>{ if(lastVoiceTs){ const s=((Date.now()-lastVoiceTs)/1000)|0;
   $('lastVoice').textContent=s<60?('0:'+String(s).padStart(2,'0')):((s/60|0)+':'+String(s%60).padStart(2,'0'));
@@ -647,6 +817,11 @@ if(radio){
     switch(e.type){
       case 'conn': setConn(e.open); if(e.open)bootstrap(); break;
       case 'audio': {
+        // Narrowband monitor: graph/play ONLY the selected channel. Other
+        // channels' squelch-open pipelines broadcast too; interleaving them
+        // into one waterfall + playback stream painted ch 71 traffic onto
+        // ch 72 and garbled the monitor audio scheduling.
+        if(e.channel&&currentChannel&&e.channel!==currentChannel)break;
         if(e.freq)currentFreq=e.freq; // drives spectrogram hue only
         // Reference applies 3x pre-gain BEFORE the FFT — without it the
         // spectrogram renders ~10 dB darker than gnosis-radio's at the
@@ -677,6 +852,7 @@ if(radio){
         break;
       case 'transcription':
         addTranscript({channel:e.channel,freq:e.freq,text:e.text},true);
+        savePersistentLog({channel:e.channel,freq:e.freq,text:e.text});
         break;
       case 'voice_paint':
         try{ const p=typeof e.painting==='string'?JSON.parse(e.painting):e.painting;
@@ -708,11 +884,33 @@ async function bootstrap(){
   try{
     const hist=await radio.control('/api/transcriptions');
     // newest at top: walk the chronological backlog prepending each entry
-    if(Array.isArray(hist))for(const h of hist.slice(-50))addTranscript(h,true);
+    if(Array.isArray(hist)) {
+      for(const h of hist.slice(-50)) addTranscript(h,true);
+      
+      // Seed persistent log if empty
+      let existingLog = [];
+      try {
+        const raw = localStorage.getItem('meridian.radio.persistent_log');
+        if (raw) existingLog = JSON.parse(raw);
+      } catch (err) {}
+      if (!Array.isArray(existingLog) || existingLog.length === 0) {
+        const seedItems = hist.slice(-100).map(h => ({
+          channel: h.channel,
+          freq: h.freq,
+          text: h.text,
+          timestamp: h.timestamp || new Date().toISOString()
+        }));
+        try {
+          localStorage.setItem('meridian.radio.persistent_log', JSON.stringify(seedItems));
+        } catch(err){}
+        renderLogbook();
+      }
+    }
   }catch(e){}
   renderPicker(); renderChannels(); renderSignal();
 }
 renderChannels(); renderPicker(); renderSignal();
+initTabs();
 
 // control hooks for /eval (screenshot endpoint falls back to capturePage —
 // this page has no Cesium canvas)
