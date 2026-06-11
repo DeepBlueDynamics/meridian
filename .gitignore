@@ -44,3 +44,7 @@ meridian-review-*.zip
 *.njsproj
 *.sln
 *.sw?
+
+# ── Spec management (junction + consumed drops stay local) ──────────────
+spec/current
+spec/archive/
