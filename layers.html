@@ -390,16 +390,16 @@ function flowInit() {
   if (flow || !window.FlowField) return;
   flow = new FlowField($("flowCanvas"));
   flowWind = flow.addLayer({
-    numParticles: 11000, maxSpeed: 33, minSpeed: 0.2,
+    numParticles: 2600, maxSpeed: 33, minSpeed: 0.2,
     // warm-only ramp: NO blue/cool tones — blue is current's identity, and a
     // blue-gray low end made slow wind over land read as "current on land".
     colorStops: [
       { stop: 0.0, color: "rgba(190,185,170,0.55)" }, { stop: 0.30, color: "#d8cfa8" },
       { stop: 0.55, color: "#f0e468" }, { stop: 0.78, color: "#f9a826" }, { stop: 1.0, color: "#e94560" }],
-    heatmapOpacity: gustOn ? 0.30 : 0, fadeOpacity: 0.972, pointSize: 1.7, dropRate: 0.002, dropRateBump: 0.008,
+    heatmapOpacity: gustOn ? 0.30 : 0, fadeOpacity: 0.972, pointSize: 1.7, dropRate: 0.0045, dropRateBump: 0.008,
   });
   flowCur = flow.addLayer({
-    numParticles: 6000, maxSpeed: 4, minSpeed: 0.05,
+    numParticles: 1600, maxSpeed: 4, minSpeed: 0.05,
     colorStops: [
       { stop: 0.0, color: "rgba(58,90,140,0.8)" }, { stop: 0.5, color: "#4fa3ff" }, { stop: 1.0, color: "#9ad7ff" }],
     // faster baseline drop: particles that bilinear-leak onto zeroed land
