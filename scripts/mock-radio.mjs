@@ -19,7 +19,7 @@ const TEXTS = [
 ];
 
 // ── state ──
-const state = { channel: 16, frequency_hz: CHANNELS[16], recording: true, listen: false,
+const state = { mock: true, channel: 16, frequency_hz: CHANNELS[16], recording: true, listen: false,
   squelch: 12, signal_db: -95, noise_floor: -92, squelch_open: false, audio_flatness: 0.85 };
 let txLog = [];
 

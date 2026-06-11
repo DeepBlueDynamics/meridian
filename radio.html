@@ -586,6 +586,8 @@ async function bootstrap(){
   try{
     const s=await radio.control('/api/status');
     if(s){
+      // Synthetic feeds must never masquerade as RF: mock-radio flags itself.
+      if(s.mock){ $('connText').textContent='⚠ SYNTHETIC FEED · mock-radio'; $('connDot').style.background='var(--warn)'; }
       if(s.channel)currentChannel=s.channel;
       if(s.frequency_hz)currentFreq=s.frequency_hz;
       recordingOn=!!s.recording; $('recSw').classList.toggle('on',recordingOn);
