@@ -65,14 +65,28 @@ control :9080 (`/api/status`, `/channel`, `/recording`, `/listen`,
 1. **radio-core** (Rust) — vendor + strip the reference crate into `radio/`;
    headless `scan` only; structured startup/state JSON on stdout so the
    supervisor can distinguish `running / no-device / no-driver / crashed`;
-   keep the wire contract bit-exact. Acceptance: builds in-repo on Windows +
-   Pi (aarch64), runs against an RTL2838, the existing radio view works
-   unchanged.
+   keep the wire contract bit-exact. **Hard-won field findings (2026-06-11)
+   that are requirements:** (a) bundle the **rtl-sdr-blog patched librtlsdr**
+   — the stock osmocom DLL misdetects the RTL-SDR Blog V4 (R828D) as R820T,
+   the PLL never locks (`[R82XX] PLL not locked!`, i2c write failures) and the
+   receiver silently sits on noise; (b) **scan mode must broadcast on the WS
+   like monitor mode does** — today wideband scan emits zero WS messages, so
+   every UI renders silence; (c) the squelch noise-floor EMA **tracks
+   continuous carriers** (NOAA/broadcast never open squelch) — use a frozen /
+   min-hold floor or a slow-decay envelope so constant signals are detectable.
+   Acceptance: builds in-repo on Windows + Pi (aarch64), runs against an
+   RTL-SDR Blog V4, the existing radio view works unchanged, NOAA weather
+   audio opens squelch.
 2. **sidecar-supervisor** (Electron main) — child-process lifecycle (spawn at
    app start, restart with backoff, kill on quit), port-collision guard,
    `window.meridian.radio.sidecarState` events, npm hooks so `npm start`
-   builds/uses the sidecar transparently. Acceptance: kill -9 the sidecar →
-   app heals; quit app → no orphan processes.
+   builds/uses the sidecar transparently. Must handle the **stale-instance
+   case** (observed live 2026-06-11): a half-dead prior instance holding
+   :9080/:9081 AND the USB device blocks any new start (`usb_open -3`) — on
+   startup, detect and kill stale instances the supervisor owns (PID file /
+   process name) before spawning. Acceptance: kill -9 the sidecar → app heals;
+   quit app → no orphan processes; relaunch after a crashed app reclaims ports
+   and dongle without user action.
 3. **driver-onboarding** (Windows UX) — live device detection (RTL2838
    VID/PID + driver-bound state), drives the radio view's setup pane states;
    investigate bundled libwdi for one-tap WinUSB install (single elevation);
