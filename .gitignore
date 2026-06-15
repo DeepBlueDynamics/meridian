@@ -11,6 +11,7 @@ sailboat_data/
 cruiser_boats.json
 isolate_cruisers.py
 *.pmtiles
+charts/
 
 # ── Logs / telemetry ──────────────────────────────────────────────────────
 logs
