@@ -811,6 +811,9 @@ function setConn(open){
   $('connDot').className='dot'+(open?' on':'');
   $('connText').textContent=open?'MONITORING · LOCAL SDR':'RADIO OFFLINE';
   $('offline').classList.toggle('hidden',open);
+  if (window.Telemetry && window.Telemetry.send) {
+    window.Telemetry.send("radio_connection", { connected: open });
+  }
 }
 if(radio){
   radio.onEvent((e)=>{
@@ -863,6 +866,9 @@ if(radio){
 }else{
   setConn(false);
   $('connText').textContent='NO BRIDGE (window.meridian.radio missing)';
+  if (window.Telemetry && window.Telemetry.send) {
+    window.Telemetry.send("radio_error", { message: "NO BRIDGE: window.meridian.radio missing" });
+  }
 }
 async function bootstrap(){
   try{

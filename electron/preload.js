@@ -23,7 +23,9 @@ function radioConnect() {
     if (radioConnected) { radioConnected = false; radioEmit({ type: "conn", open: false }); }
     radioRetryTimer = setTimeout(radioConnect, 2000);
   };
-  radioWs.onerror = () => { /* onclose handles retry */ };
+  radioWs.onerror = (e) => {
+    console.warn(`[preload-radio] WebSocket connection failed to: ${RADIO_WS}`);
+  };
   radioWs.onmessage = (e) => {
     if (typeof e.data === "string") {
       try { radioEmit(JSON.parse(e.data)); } catch (err) { /* skip bad frame */ }
