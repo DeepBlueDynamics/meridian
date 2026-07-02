@@ -23,9 +23,13 @@ $radioDir = Join-Path (Split-Path -Parent $repo) "gnosis-radio"
 $radioExe = Join-Path $radioDir "target\release\gnosis-radio.exe"
 
 # ── stop stale instances (dongle + ports 9080/9081/9123 must be free) ──
-foreach ($name in @("electron", "gnosis-radio")) {
-  try { Get-Process $name -ErrorAction Stop | Stop-Process -Force -Confirm:$false } catch {}
-}
+# NEVER kill electron.exe by name: other Electron apps (Hyperia, the terminal)
+# run under that name too. Match Meridian's instance by its command line
+# (…meridian\node_modules\electron…) instead.
+Get-CimInstance Win32_Process -Filter "Name = 'electron.exe'" |
+  Where-Object { $_.CommandLine -match 'meridian' } |
+  ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -Confirm:$false } catch {} }
+try { Get-Process gnosis-radio -ErrorAction Stop | Stop-Process -Force -Confirm:$false } catch {}
 Start-Sleep -Seconds 1
 
 # ── build ──
