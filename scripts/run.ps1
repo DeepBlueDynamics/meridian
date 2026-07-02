@@ -29,7 +29,9 @@ $radioExe = Join-Path $radioDir "target\release\gnosis-radio.exe"
 Get-CimInstance Win32_Process -Filter "Name = 'electron.exe'" |
   Where-Object { $_.CommandLine -match 'meridian' } |
   ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -Confirm:$false } catch {} }
-try { Get-Process gnosis-radio -ErrorAction Stop | Stop-Process -Force -Confirm:$false } catch {}
+foreach ($name in @("gnosis-radio", "meridian-sidecar")) {
+  try { Get-Process $name -ErrorAction Stop | Stop-Process -Force -Confirm:$false } catch {}
+}
 Start-Sleep -Seconds 1
 
 # ── build ──
@@ -52,7 +54,23 @@ if ($haveRadio -and -not $SkipBuild) {
   Write-Host ">> no gnosis-radio checkout next to this repo - starting app only" -ForegroundColor Yellow
 }
 
+# meridian-sidecar (the agent surface: MCP on :9124) — in-repo crate
+$sidecarDir = Join-Path $repo "sidecar"
+$sidecarExe = Join-Path $sidecarDir "target\release\meridian-sidecar.exe"
+if (-not $SkipBuild -and (Test-Path (Join-Path $sidecarDir "Cargo.toml"))) {
+  Write-Host ">> cargo build --release (meridian-sidecar)" -ForegroundColor Cyan
+  Push-Location $sidecarDir
+  cargo build --release
+  $scOk = $LASTEXITCODE -eq 0
+  Pop-Location
+  if (-not $scOk) { throw "meridian-sidecar build failed" }
+}
+
 # ── launch ──
+if (Test-Path $sidecarExe) {
+  Write-Host ">> sidecar: $sidecarExe (MCP http://127.0.0.1:9124/mcp)" -ForegroundColor Cyan
+  Start-Process -FilePath $sidecarExe -WorkingDirectory $repo -WindowStyle Hidden
+}
 if ($haveRadio -and (Test-Path $radioExe)) {
   Write-Host ">> radio sidecar: $radioExe scan" -ForegroundColor Cyan
   # WorkingDirectory matters: the sidecar writes recordings/ and logs/ relative

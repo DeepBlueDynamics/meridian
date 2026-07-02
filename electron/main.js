@@ -1,4 +1,5 @@
 import { app, BrowserWindow, protocol, net, ipcMain, shell, screen } from "electron";
+import { startBridge, stopBridge, notifyViewChanged } from "./bridge.js";
 import http from "node:http";
 import path from "node:path";
 import fs from "node:fs";
@@ -111,7 +112,29 @@ function logTelemetry(entry) {
 // never see the redirect flow.
 const authTokenFile = () => path.join(app.getPath("userData"), "meridian-jwt.txt");
 function readAuthToken() {
-  try { const t = fs.readFileSync(authTokenFile(), "utf8").trim(); return t || null; } catch (e) { return null; }
+  try {
+    const filePath = authTokenFile();
+    if (!fs.existsSync(filePath)) return null;
+    const t = fs.readFileSync(filePath, "utf8").trim();
+    if (!t) return null;
+    const parts = t.split(".");
+    if (parts.length === 3) {
+      try {
+        const payload = JSON.parse(Buffer.from(parts[1].replace(/-/g, "+").replace(/_/g, "/"), "base64").toString());
+        if (payload.exp && payload.exp < Date.now() / 1000) {
+          console.log("[auth] JWT token has expired, clearing file");
+          try { fs.unlinkSync(filePath); } catch (e) {}
+          notifyAuthChanged();
+          return null;
+        }
+      } catch (err) {
+        console.warn("[auth] failed to parse JWT payload:", err.message);
+      }
+    }
+    return t;
+  } catch (e) {
+    return null;
+  }
 }
 function notifyAuthChanged() {
   try { if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send("meridian:auth-changed"); } catch (e) { /* noop */ }
@@ -170,6 +193,61 @@ function mcpWindowResize(a = {}) {
   return mcpWindowBounds();
 }
 
+// ── shared app-control handlers ────────────────────────────────────────────
+// One implementation each; both the :9123 HTTP control server and the
+// meridian-sidecar bridge (:9124 agent surface) dispatch here.
+const VIEW_FILES = { setup: "setup.html", routing: "routing.html", layers: "layers.html", harbor: "index.html", radio: "radio.html" };
+let currentView = "setup";
+function viewFromUrl(u) {
+  const f = String(u || "").split("/").pop().split("?")[0];
+  return Object.keys(VIEW_FILES).find((k) => VIEW_FILES[k] === f) || f.replace(".html", "");
+}
+
+function evalInRenderer(code) {
+  return mainWin.webContents.executeJavaScript(`(async () => { ${code} })()`, true);
+}
+
+// Renderer-canvas capture is primary: capturePage() returns empty when the
+// window is occluded. view=dep|arr captures the routing miniviews.
+async function captureScreenshot(which) {
+  const expr =
+    "(()=>{const M=window.m;if(!M)return '';" +
+    "const v=" + (which === "dep" ? "M.depViewer" : which === "arr" ? "M.arrViewer" : "(M.mainViewer||M.viewer)") + ";" +
+    "if(!v)return '';v.scene.render();return v.scene.canvas.toDataURL('image/png');})()";
+  const dataUrl = await mainWin.webContents.executeJavaScript(expr, true).catch(() => "");
+  if (dataUrl && dataUrl.startsWith("data:image/png")) return dataUrl;
+  try { return (await mainWin.webContents.capturePage()).toDataURL(); } catch (e) { return ""; }
+}
+
+// loadFile resolves after did-finish-load — callers may eval immediately after.
+async function loadView(view) {
+  const page = VIEW_FILES[view];
+  if (!page) throw new Error("unknown view: " + view + " (setup|routing|layers|harbor|radio)");
+  await mainWin.loadFile(path.join(__dirname, "..", page));
+  return view;
+}
+
+async function executeBridgeCommand(msg) {
+  if (!mainWin || mainWin.isDestroyed()) return { ok: false, error: "no app window" };
+  switch (msg.type) {
+    case "AppStatus":
+      return { ok: true, view: currentView, ...mcpWindowBounds(), signedIn: !!readAuthToken(), fullscreen: mainWin.isFullScreen() };
+    case "Eval": {
+      const r = await evalInRenderer(String(msg.code || ""));
+      return { ok: true, result: r === undefined ? null : r };
+    }
+    case "Screenshot": {
+      const d = await captureScreenshot(msg.view || "main");
+      return d ? { ok: true, dataUrl: d } : { ok: false, error: "capture produced no pixels" };
+    }
+    case "WindowResize": return { ok: true, ...mcpWindowResize(msg) };
+    case "WindowBounds": return { ok: true, ...mcpWindowBounds() };
+    case "Navigate": return { ok: true, view: await loadView(String(msg.view || "")) };
+    case "Reload": mainWin.reload(); return { ok: true };
+    default: return { ok: false, error: "unknown command: " + msg.type };
+  }
+}
+
 function startControlServer() {
   const server = http.createServer(async (req, res) => {
     res.setHeader("Access-Control-Allow-Origin", "*");
@@ -177,7 +255,12 @@ function startControlServer() {
     try {
       if (url.pathname === "/health") { res.end("ok"); return; }
       if (url.pathname === "/auth-callback") {
-        const token = url.searchParams.get("token") || "";
+        let token = url.searchParams.get("token") || "";
+        if (!token) {
+          const rawUrl = req.url || "";
+          const m = rawUrl.match(/[?&]token=([^&?#]+)/);
+          if (m) token = decodeURIComponent(m[1]);
+        }
         if (token) {
           try { fs.writeFileSync(authTokenFile(), token); } catch (e) { console.warn("[auth] persist failed:", e.message); }
           notifyAuthChanged();
@@ -270,18 +353,9 @@ function startControlServer() {
       }
 
       if (url.pathname === "/screenshot") {
-        // Renderer-canvas capture is primary: capturePage() returns empty when the
-        // window is occluded. Captures the main Cesium view (panel/harbors verified
-        // separately). Optional ?view=dep|arr captures those canvases.
-        const which = url.searchParams.get("view") || "main";
-        const expr =
-          "(()=>{const M=window.m;if(!M)return '';" +
-          "const v=" + (which === "dep" ? "M.depViewer" : which === "arr" ? "M.arrViewer" : "(M.mainViewer||M.viewer)") + ";" +
-          "if(!v)return '';v.scene.render();return v.scene.canvas.toDataURL('image/png');})()";
-        let png = Buffer.alloc(0);
-        const dataUrl = await mainWin.webContents.executeJavaScript(expr, true).catch(() => "");
-        if (dataUrl && dataUrl.startsWith("data:image/png")) png = Buffer.from(dataUrl.split(",")[1], "base64");
-        if (png.length === 0) { try { png = (await mainWin.webContents.capturePage()).toPNG(); } catch { /* noop */ } }
+        const dataUrl = await captureScreenshot(url.searchParams.get("view") || "main");
+        const idx = dataUrl.indexOf("base64,");
+        const png = idx >= 0 ? Buffer.from(dataUrl.slice(idx + 7), "base64") : Buffer.alloc(0);
         res.setHeader("Content-Type", "image/png");
         res.end(png);
         return;
@@ -291,7 +365,7 @@ function startControlServer() {
         for await (const c of req) body += c;
         let code = body;
         try { const j = JSON.parse(body); if (j && typeof j.code === "string") code = j.code; } catch { /* raw */ }
-        const result = await mainWin.webContents.executeJavaScript(`(async () => { ${code} })()`, true);
+        const result = await evalInRenderer(code);
         res.setHeader("Content-Type", "application/json");
         res.end(JSON.stringify({ ok: true, result: result ?? null }));
         return;
@@ -324,11 +398,16 @@ const createWindow = () => {
     console.log(`[RENDERER] ${message} (${src}:${line})`);
   });
   mainWin = win;
+  // Track the live view (topbar nav swaps file:// pages) and tell the sidecar.
+  win.webContents.on("did-finish-load", () => {
+    currentView = viewFromUrl(win.webContents.getURL());
+    notifyViewChanged(currentView);
+  });
   // Start on the Vessel Setup view; nav links toggle to routing/layers/harbor at runtime.
   // MERIDIAN_VIEW=routing|layers|radio|harbor changes the start page.
   const v = process.env.MERIDIAN_VIEW;
-  const page = v === "harbor" ? "index.html" : v === "routing" ? "routing.html"
-             : v === "layers" ? "layers.html" : v === "radio" ? "radio.html" : "setup.html";
+  const page = VIEW_FILES[v] || "setup.html";
+  currentView = viewFromUrl(page);
   win.loadFile(path.join(__dirname, "..", page));
   win.focus();
   // DevTools off by default (set MERIDIAN_DEVTOOLS=1 to open it).
@@ -427,7 +506,10 @@ app.whenReady().then(() => {
   createWindow();
   startControlServer();
   startTranscribeRelay();
+  // Agent surface: dial the meridian-sidecar's WS bus (:9124). Fail-soft —
+  // the app is fully functional with no sidecar running.
+  startBridge({ appVersion: app.getVersion(), getView: () => currentView, execute: executeBridgeCommand });
 });
 
-app.on("window-all-closed", () => { if (process.platform !== "darwin") app.quit(); });
+app.on("window-all-closed", () => { stopBridge(); if (process.platform !== "darwin") app.quit(); });
 app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });

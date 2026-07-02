@@ -1,5 +1,9 @@
 {
   "mcpServers": {
+    "meridian": {
+      "type": "http",
+      "url": "http://127.0.0.1:9124/mcp"
+    },
     "meridian-app": {
       "type": "http",
       "url": "http://127.0.0.1:9123/mcp"

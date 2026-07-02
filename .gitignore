@@ -49,3 +49,6 @@ meridian-review-*.zip
 # ── Spec management (junction + consumed drops stay local) ──────────────
 spec/current
 spec/archive/
+
+# rust sidecar build artifacts
+sidecar/target/

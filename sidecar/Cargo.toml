@@ -1,0 +1,37 @@
+[package]
+name = "meridian-sidecar"
+version = "0.1.0"
+edition = "2021"
+description = "Rust sidecar for Meridian: the agent surface (MCP over streamable HTTP)"
+license = "MIT"
+
+# Standalone crate — the empty workspace table keeps any future parent
+# workspace from capturing it (same trick as the Hyperia sidecar).
+[workspace]
+
+[profile.release]
+strip = true
+lto = true
+
+[dependencies]
+# HTTP server + WebSocket bridge (Electron dials into /ws)
+axum = { version = "0.8", features = ["ws"] }
+tokio = { version = "1", features = ["full"] }
+futures = "0.3"
+
+# MCP server (streamable HTTP, stateless). rmcp is pre-1.0 with a three-way
+# version coupling (rmcp ↔ schemars 1.0 ↔ axum/http) — these lines are copied
+# from the known-good Hyperia sidecar; do not `cargo update` casually.
+rmcp = { version = "0.15", features = ["server", "macros", "transport-streamable-http-server", "schemars"] }
+schemars = "1.0"
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Upstream proxies: Meridian Radio (:9080) and the skiff simulator (:8081)
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+anyhow = "1"
+clap = { version = "4", features = ["derive", "env"] }
