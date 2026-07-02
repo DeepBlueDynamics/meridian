@@ -32,6 +32,7 @@ Single source of truth for the spec suite. Every spec carries a `_Revised:` date
 | `spec-radio.md` | VHF radio monitor, transcription & voice control (**active**) | core hub; acp, userdata |
 | `spec-radio-embedded.md` | Embedded radio stack sidecar + Electron supervisor (**draft**) | consumes radio, service-layer |
 | `spec-radio-audit.md` | VHF radio stack security, DSP, and process supervisor audit (**draft**) | depends on radio, radio-embedded |
+| `spec-wind-current-audit.md` | Wind/current viz math, perf, cache & landmask audit — B-01..B-04 (**draft**) | depends on wind-current-layers, service-layer |
 
 ## Superseded / prompts / artifacts
 

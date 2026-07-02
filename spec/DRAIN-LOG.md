@@ -5,6 +5,19 @@ step from `current/AGENT-INSTRUCTIONS.md` §3.7.
 
 ---
 
+## 2026-07-02 — wind/current viz audit drop (pre-release sprint)
+
+**Filed:** `spec-wind-current-audit.md` → `2026-06-11/` (its revision cohort;
+draft). Findings B-01 routing-view legacy wind styling (medium), B-02
+prepFlowField main-thread cost (low), B-03 wx cache overwrites by kind —
+single region only (medium), B-04 router hardcoded LAND boxes vs landmask
+(high — but partially stale: router already takes `env.landGuard` wired to
+LandMask; boxes are the pre-mask fallback. Verify before acting). Index
+updated. Also removed `spec-route-research-frontend.md` from inbox — it was
+an identical leftover of the copy already filed in `2026-06-11/`.
+
+---
+
 ## 2026-06-11 (late night) — VHF radio stack audit drop
 
 **Filed:** `spec-radio-audit.md` (draft — VHF radio stack security boundaries, DSP spectrogram rendering, playback jitter, and Electron supervisor analysis). Index updated.
