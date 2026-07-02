@@ -793,7 +793,14 @@ async function renderTxCfg(){
     window.meridian.transcribe.setConfig({remote:TXCFG.remote,saveLogs:TXCFG.saveLogs});
   if(TXCFG.remote&&window.meridian&&window.meridian.auth){
     const t=await window.meridian.auth.getToken();
-    $('txAuthHint').innerHTML=t?'relay :8765 → service /transcribe · transient processing, 1 h expiry'
+    let expired = false;
+    if (t) {
+      try {
+        const claims = JSON.parse(atob(t.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+        if (claims.exp && claims.exp < Date.now() / 1000) expired = true;
+      } catch (err) {}
+    }
+    $('txAuthHint').innerHTML=(t && !expired)?'relay :8765 → service /transcribe · transient processing, 1 h expiry'
       :'⚠ <b style="color:var(--warn)">sign in required</b> — ⚡ SVC chip in the top bar';
   }
 }
