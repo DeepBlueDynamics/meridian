@@ -300,6 +300,44 @@ function startControlServer() {
         res.end("ok");
         return;
       }
+      // Anthropic relay for the Helm terminal's widget builder — the key
+      // stays in the MAIN process (.env ANTHROPIC_API_KEY), the renderer
+      // only sees this loopback endpoint. Wire shape = the Messages API.
+      if (url.pathname === "/anthropic/messages" && req.method === "POST") {
+        const key = process.env.ANTHROPIC_API_KEY || "";
+        res.setHeader("Content-Type", "application/json");
+        if (!key) {
+          res.statusCode = 503;
+          res.end(JSON.stringify({ error: { message: "ANTHROPIC_API_KEY not set in .env — the widget builder needs it (or the service infer.complete executor, pending)" } }));
+          return;
+        }
+        let body = "";
+        for await (const c of req) body += c;
+        try {
+          const upstream = await net.fetch("https://api.anthropic.com/v1/messages", {
+            method: "POST",
+            headers: { "content-type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
+            body,
+          });
+          res.statusCode = upstream.status;
+          res.end(await upstream.text());
+        } catch (e) {
+          res.statusCode = 502;
+          res.end(JSON.stringify({ error: { message: "relay: " + (e && e.message || e) } }));
+        }
+        return;
+      }
+      // Repo-relative lib assets over http — Babel standalone can't fetch
+      // file:// sources (Chromium blocks file XHR), so the Helm terminal
+      // loads its JSX from here.
+      if (url.pathname.startsWith("/lib/") && req.method === "GET") {
+        const name = path.basename(url.pathname);
+        const fp = path.join(__dirname, "..", "lib", name);
+        if (!/\.(js|jsx|css)$/.test(name) || !fs.existsSync(fp)) { res.statusCode = 404; res.end("not found"); return; }
+        res.setHeader("Content-Type", "text/javascript; charset=utf-8");
+        res.end(fs.readFileSync(fp));
+        return;
+      }
       // Local chart data with HTTP Range support — PMTiles readers fetch
       // byte ranges, and file:// pages can't fetch local files directly.
       if (url.pathname.startsWith("/charts/") && req.method === "GET") {

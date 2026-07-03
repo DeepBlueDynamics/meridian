@@ -132,3 +132,15 @@ self-host Open-Meteo (AGPLv3) or fetch ECMWF/GFS/SMOC sources directly
 (CC-BY/public). Tracked in the catalog + `spec-service-layer.md` territory.
 
 **Inbox after drain:** `README.md` only (empty = nothing pending).
+
+## 2026-07-03 — meridian-terminal drop (the Helm view)
+
+**Filed:** `meridian-terminal.jsx` → `2026-06-11/` (reference React
+implementation, ~130KB). Adapted copy lives at `lib/meridian-terminal.jsx`
+and IS the Helm view: an agentic widget builder — describe a widget at the
+prompt, the LLM writes the component, it compiles into the tool registry
+live and renders as a draggable window over the ship-data context.
+Adaptations: React UMD + Babel standalone (no build step), LLM calls through
+the :9123 loopback relay (ANTHROPIC_API_KEY in main-process .env; swap to
+service infer.complete when its executor lands), Signal K bridge overlays
+the sim data, window.m.command() lets the MCP agent type like the human.

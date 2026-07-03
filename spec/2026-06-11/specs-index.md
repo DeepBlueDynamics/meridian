@@ -33,6 +33,7 @@ Single source of truth for the spec suite. Every spec carries a `_Revised:` date
 | `spec-radio-embedded.md` | Embedded radio stack sidecar + Electron supervisor (**draft**) | consumes radio, service-layer |
 | `spec-radio-audit.md` | VHF radio stack security, DSP, and process supervisor audit (**draft**) | depends on radio, radio-embedded |
 | `spec-wind-current-audit.md` | Wind/current viz math, perf, cache & landmask audit — B-01..B-04 (**draft**) | depends on wind-current-layers, service-layer |
+| `meridian-terminal.jsx` | Helm view reference: agentic widget-builder terminal (**active**, adapted in lib/) | infer relay; signalk |
 | `spec-route-sidecar.md` | Rust isochrone executor + the route.compute wire contract (**active**) | service-usage §5, service-layer §3.5 |
 
 ## Superseded / prompts / artifacts
