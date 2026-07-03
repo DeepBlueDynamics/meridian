@@ -173,16 +173,26 @@
   .risk .v.hot{color:var(--hot)} .risk .v.warn{color:var(--warn)} .risk .v.ok{color:var(--cool)}
   .risk .x { font-family:var(--mono); font-size:9px; color:var(--ink-faint); margin-top:4px; }
 
-  .loader { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; flex-direction:column;
-    background:rgba(10,15,24,0.95); z-index:20; backdrop-filter:blur(8px); }
+  /* Non-modal progress pill: routing/fetching must not block the map.
+     The full-pane treatment survives only for fatal states (.fatal). */
+  .loader { position:absolute; left:12px; top:40px; z-index:8; display:flex; align-items:center; gap:10px;
+    padding:8px 12px; background:rgba(4,10,19,0.82); border:1px solid var(--line-bright); border-radius:5px;
+    pointer-events:none; max-width:440px; }
   .loader.hidden { display:none; }
-  .loader .ring { width:36px; height:36px; border:1px solid var(--ink-fade); border-top-color:var(--envelope); border-radius:50%; animation:spin 1.2s linear infinite; margin-bottom:18px; }
+  .loader .ring { width:16px; height:16px; border:1px solid var(--ink-fade); border-top-color:var(--envelope); border-radius:50%; animation:spin 1.2s linear infinite; flex-shrink:0; }
   @keyframes spin { to{transform:rotate(360deg)} }
-  .loader .text { font-family:var(--serif); font-size:20px; margin-bottom:6px; }
-  .loader .sub { font-family:var(--mono); font-size:11px; color:var(--ink-faint); letter-spacing:0.12em; text-transform:uppercase; max-width:380px; text-align:center; line-height:1.5; }
-  .loader .progress { margin-top:16px; width:240px; height:2px; background:var(--ink-fade); overflow:hidden; }
+  .loader .text { font-family:var(--mono); font-size:11px; color:var(--ink); letter-spacing:0.06em; white-space:nowrap; }
+  .loader .sub { font-family:var(--mono); font-size:9px; color:var(--ink-faint); letter-spacing:0.08em; text-transform:uppercase; line-height:1.4; }
+  .loader .progress { width:90px; height:2px; background:var(--ink-fade); overflow:hidden; flex-shrink:0; }
   .loader .progress .bar { height:100%; background:var(--envelope); width:0; transition:width .3s; }
-  .loader .err-detail { margin-top:18px; padding:12px 16px; border:1px solid var(--hot); color:var(--hot); font-family:var(--mono); font-size:11px; max-width:560px; line-height:1.5; }
+  .loader .err-detail { padding:12px 16px; border:1px solid var(--hot); color:var(--hot); font-family:var(--mono); font-size:11px; max-width:560px; line-height:1.5; }
+  .loader.fatal { inset:0; flex-direction:column; justify-content:center; gap:0; border:none; border-radius:0;
+    background:rgba(10,15,24,0.95); backdrop-filter:blur(8px); z-index:20; pointer-events:auto; max-width:none; }
+  .loader.fatal .ring { width:36px; height:36px; margin-bottom:18px; }
+  .loader.fatal .text { font-family:var(--serif); font-size:20px; margin-bottom:6px; white-space:normal; }
+  .loader.fatal .sub { font-size:11px; letter-spacing:0.12em; max-width:380px; text-align:center; line-height:1.5; }
+  .loader.fatal .progress { margin-top:16px; width:240px; }
+  .loader.fatal .err-detail { margin-top:18px; }
 </style>
 </head>
 <body>
@@ -900,7 +910,10 @@ function positionCameras(){
 // ════════════════════ live fetch + route (boot AND port changes) ════════════════════
 async function loadLiveAndRoute(){
   const loader=document.getElementById('loader'),loaderText=document.getElementById('loaderText'),loaderSub=document.getElementById('loaderSub'),loaderBar=document.getElementById('loaderBar');
-  loader.classList.remove('hidden'); loaderBar.style.width='0%';
+  // show the passage immediately — the camera must not wait for data
+  positionCameras();
+  loader.classList.remove('hidden','fatal'); loader.querySelector('.ring').style.display='';
+  loaderBar.style.width='0%';
   const errBox=loader.querySelector('.err-detail'); if(errBox)errBox.remove();
   refreshWindGrid(); // visualization-only — parallel, fail soft
   try{
@@ -956,6 +969,7 @@ async function loadLiveAndRoute(){
   }catch(err){ console.error(err);
     if(window.Telemetry)window.Telemetry.send('live-fetch-failed',{message:err.message,stack:err.stack,
       dep:START.name,arr:DEST.name,depCoord:[START.lat,START.lon],arrCoord:[DEST.lat,DEST.lon],depAnchor,arrAnchor});
+    loader.classList.add('fatal'); // errors get the full-pane treatment
     loader.querySelector('.ring').style.display='none'; loaderSub.textContent='';
     const e=document.createElement('div'); e.className='err-detail';
     if(err.quota){
