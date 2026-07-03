@@ -15,9 +15,12 @@
 // Files are regeneratable and gitignored.
 
 import fs from "node:fs";
+global.window = {};
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+eval(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "lib/fdmath.js"), "utf8"));
+const FdMath = global.window.FdMath;
 const N = Math.max(1000, parseInt(process.argv[2] || "1000000", 10));
 const outDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "sidecar", "tests", "corpus");
 fs.mkdirSync(outDir, { recursive: true });
@@ -56,8 +59,8 @@ const angleSampler = (rnd) => {
   if (r < 0.9) return (rnd() * 720 - 360) * (Math.PI / 180); // deg-derived
   return (rnd() * 2e6 - 1e6) / 1000;                       // wilder
 };
-genUnary("sin", Math.sin, angleSampler, 0xC0FFEE);
-genUnary("cos", Math.cos, angleSampler, 0xBEEF01);
+genUnary("sin", FdMath.sin, angleSampler, 0xC0FFEE);
+genUnary("cos", FdMath.cos, angleSampler, 0xBEEF01);
 // asin: domain [-1,1] with heavy density near ±1 (gcDistance hits sqrt(a)≈1)
 genUnary("asin", Math.asin, (rnd) => {
   const r = rnd();
@@ -77,7 +80,7 @@ genUnary("asin", Math.asin, (rnd) => {
     else { y = mag(); x = mag(); }
     buf.writeDoubleLE(y, i * 24);
     buf.writeDoubleLE(x, i * 24 + 8);
-    buf.writeDoubleLE(Math.atan2(y, x), i * 24 + 16);
+    buf.writeDoubleLE(FdMath.atan2(y, x), i * 24 + 16);
   }
   fs.writeFileSync(path.join(outDir, "atan2.bin"), buf);
   console.log(`atan2.bin  ${N} samples`);

@@ -336,6 +336,7 @@
 <script src="lib/topbar.js"></script>
 <script src="lib/api-service.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/cesium/1.124.0/Cesium.js"></script>
+<script src="lib/fdmath.js"></script>
 <script src="lib/vessel.js"></script>
 <script src="lib/router.js"></script>
 <script src="lib/landmask.js"></script>
@@ -862,6 +863,31 @@ function makeEnv(){
     vessel:VESSEL, start:depAnchor||START, dest:arrAnchor||DEST, maxHours:MAX_HOURS, arrivalTolNm:ARRIVAL_TOL_NM,
     motoring:MOTORING, landGuard:activeLandGuard };
 }
+// The canonical route request — the same payload the Rust sidecar's
+// POST /route/compute takes (and, later, the cloud route.compute skill).
+// Members carry explicit ordered series keys so the engine never depends on
+// JSON object-key ordering. constraints.min_depth_m is reserved for the
+// shallows-avoidance config (owner directive) — null until depth data lands.
+function buildRouteRequest(){
+  const windSeries=(h)=>{ const out={}; for(const k of Object.keys(h))
+    if(k.startsWith('wind_speed_10m')||k.startsWith('wind_direction_10m')) out[k]=h[k]; return out; };
+  return {
+    raw_start:{lat:START.lat,lon:START.lon}, raw_dest:{lat:DEST.lat,lon:DEST.lon},
+    vessel:{twa:VESSEL.twa,tws:VESSEL.tws,bsp:VESSEL.bsp},
+    motoring:{enabled:!!MOTORING.enabled,motorKt:MOTORING.motorKt,thresholdKt:MOTORING.thresholdKt},
+    use_currents:useCurrents, dep_offset_hours:depOffsetHours,
+    max_hours:MAX_HOURS, arrival_tol_nm:ARRIVAL_TOL_NM, time_step_h:2,
+    constraints:{min_depth_m:null},
+    members:parsedMembers,
+    wind_results:currentWindResults?currentWindResults.map(w=>({sample:{lat:w.sample.lat,lon:w.sample.lon},
+      time_len:w.data.hourly.time.length, series:windSeries(w.data.hourly)})):null,
+    marine_results:marineResults?marineResults.map(c=>c.data?{sample:{lat:c.sample.lat,lon:c.sample.lon},
+      time_len:c.data.hourly.time.length,
+      ocean_current_velocity:c.data.hourly.ocean_current_velocity,
+      ocean_current_direction:c.data.hourly.ocean_current_direction}
+      :{sample:{lat:c.sample.lat,lon:c.sample.lon},time_len:0,ocean_current_velocity:null,ocean_current_direction:null}):null,
+  };
+}
 let rerouting=false,rerouteQueued=false;
 async function rerouteAndRender(){
   if(!currentWindResults||!parsedMembers)return;
@@ -1182,7 +1208,14 @@ window.m = { Cesium, mainViewer, depViewer, arrViewer, reroute:rerouteAndRender,
     scrubH, maxScrubH, playing, windGrid:windGrid?windGrid.length:0, depOffsetHours, useCurrents,
     dep:START.name, arr:DEST.name, motoring:MOTORING, landMask:window.LandMask?window.LandMask.isReady():false,
     depAnchor, arrAnchor }),
-  flyMain:(lon,lat,h,p=-90)=>mainViewer.camera.setView({destination:Cesium.Cartesian3.fromDegrees(lon,lat,h),orientation:{heading:0,pitch:Cesium.Math.toRadians(p),roll:0}}) };
+  flyMain:(lon,lat,h,p=-90)=>mainViewer.camera.setView({destination:Cesium.Cartesian3.fromDegrees(lon,lat,h),orientation:{heading:0,pitch:Cesium.Math.toRadians(p),roll:0}}),
+  // Parity-fixture dump: the sidecar request + the JS engine's results for
+  // the SAME inputs, captured atomically. Feeds sidecar golden tests (R-6).
+  dumpRouteFixture:()=>({
+    request:buildRouteRequest(),
+    anchors:{dep:depAnchor,arr:arrAnchor},
+    landmask_mode:(window.LandMask&&window.LandMask.isReady&&window.LandMask.isReady())?'full':'boxes_only',
+    js_routes:lastRoutes }) };
 console.log("[routing] control hooks ready: window.m");
 main();
 </script>
