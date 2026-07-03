@@ -215,11 +215,14 @@
     <div class="left">
       <div class="pane">
         <div id="mainView" class="cz"></div>
+        <canvas id="flowCanvas" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:4;display:none;"></canvas>
         <div class="tag"><b>Passage</b> · isochrone ensemble on Google 3D Tiles</div>
         <div class="scrubbar" id="scrubbar" style="display:none">
           <button class="sbtn" id="playBtn" title="Play / pause passage">▶</button>
           <input id="scrub" type="range" min="0" max="120" step="1" value="0" />
           <div class="t" id="scrubLabel">T+0h</div>
+          <button class="sbtn" id="flowBtn" title="Animated particle flow (matches Layers)">FLOW</button>
+          <button class="sbtn" id="linesBtn" title="Static wind/current lines">LINES</button>
           <button class="sbtn active" id="windBtn" title="Toggle wind field (white, matches Layers)">WIND</button>
           <button class="sbtn active" id="curBtn" title="Toggle current field (blue, matches Layers)">CUR</button>
           <button class="sbtn" id="fleetBtn" title="Show all ensemble member routes">FLEET</button>
@@ -342,6 +345,7 @@
 <script src="lib/fdmath.js"></script>
 <script src="lib/field.js"></script>
 <script src="lib/fieldlayer.js"></script>
+<script src="lib/flow-field.js"></script>
 <script src="lib/vessel.js"></script>
 <script src="lib/router.js"></script>
 <script src="lib/landmask.js"></script>
@@ -405,7 +409,7 @@ const arrViewer  = makeViewer("arrView", false);
 // per notch; ~1.8 gives usable fine control at harbor scales.
 for(const v of [mainViewer,depViewer,arrViewer]) v.scene.screenSpaceCameraController._zoomFactor=1.8;
 // re-sample the wind/current lines when the camera settles
-mainViewer.camera.moveEnd.addEventListener(()=>{ try{ renderFieldViz(); }catch(e){} });
+mainViewer.camera.moveEnd.addEventListener(()=>{ try{ if(typeof vizMode!=='undefined'&&vizMode==='flow'){ rFlowInvalidate(); rFlowUpdate(); } else renderFieldViz(); }catch(e){} });
 
 // ════════════════════ route endpoints (editable, persisted) ════════════════════
 const DEFAULT_ROUTE = {
@@ -747,7 +751,7 @@ function updateScrub(){
   updateWindReadouts(medPos);
   const when=forecastIssueDate?hoursToETA(forecastIssueDate,scrubH+depOffsetHours):'—';
   document.getElementById('scrubLabel').innerHTML=`<b>T+${Math.round(scrubH)}h</b> · ${when}${medInfo}`;
-  renderFieldViz();
+  if(typeof vizMode!=='undefined'&&vizMode==='flow')rFlowUpdate(); else renderFieldViz();
   updateEtaNowLine();
 }
 
@@ -812,7 +816,7 @@ async function refreshVizFields(){
       W.fetchCurrent(grid).catch(e=>{ console.warn('[viz] current field:',e.message); return null; }),
     ]);
     vizWindField=wf; vizCurField=cf; vizLastKey='';
-    renderFieldViz();
+    rFlowInvalidate(); renderFieldViz(); rFlowUpdate();
   }catch(e){ console.warn('[viz] field refresh failed:',e.message); }
 }
 function cesiumZoomEquiv(){
@@ -843,6 +847,7 @@ function fieldT(field){
 }
 function renderFieldViz(force){
   const FL=window.FieldLayer, W=window.WxField; if(!FL||!W)return;
+  if(typeof vizMode!=='undefined'&&vizMode!=='lines'){ if(vizLines){vizLines.removeAll();vizPoints.removeAll();vizLastKey='';} rFlowUpdate(); return; }
   if(!vizLines){
     vizLines=mainViewer.scene.primitives.add(new Cesium.PolylineCollection());
     vizPoints=mainViewer.scene.primitives.add(new Cesium.PointPrimitiveCollection());
@@ -870,6 +875,103 @@ function renderFieldViz(force){
   };
   if(vizCurShown)addSet(vizCurField,waterSamples,FL.CUR_COLOR,245,1.9);
   if(vizWindShown)addSet(vizWindField,samples,FL.WIND_COLOR,235,1.6);
+}
+
+// ── FLOW mode: the Layers particle animation over the Cesium map ──────────
+// Windy-style: wind = white/gray short-trail particles at 50% opacity,
+// current = brighter blue. Bounds come from unprojecting the canvas corners
+// (the routing camera is top-down); if the horizon is in view we fall back
+// to hiding the layer (equirect mapping would lie on a tilted globe).
+let vizMode=localStorage.getItem('meridian.routing.vizmode')||'flow';
+let rflow=null,rflowWind=null,rflowCur=null,rFlowWindHour=-1,rFlowCurHour=-1;
+function rFlowInit(){
+  if(rflow||!window.FlowField)return;
+  rflow=new FlowField(document.getElementById('flowCanvas'));
+  rflowWind=rflow.addLayer({ numParticles:2200, maxSpeed:33, minSpeed:0.2,
+    colorStops:[{stop:0.0,color:'rgba(185,192,205,0.75)'},{stop:0.5,color:'rgba(226,232,240,0.9)'},{stop:1.0,color:'rgba(252,253,255,1.0)'}],
+    opacity:0.5, fadeOpacity:0.90, pointSize:1.6, dropRate:0.0045, dropRateBump:0.008 });
+  rflowCur=rflow.addLayer({ numParticles:1400, maxSpeed:4, minSpeed:0.05,
+    colorStops:[{stop:0.0,color:'rgba(90,150,230,0.9)'},{stop:0.5,color:'#6fbaff'},{stop:1.0,color:'#c4e6ff'}],
+    opacity:0.8, fadeOpacity:0.985, pointSize:1.6, dropRate:0.008 });
+}
+function rFlowBounds(){
+  const c=mainViewer.scene.canvas, ell=mainViewer.scene.globe.ellipsoid;
+  const pts=[[2,2],[c.clientWidth-2,2],[2,c.clientHeight-2],[c.clientWidth-2,c.clientHeight-2]];
+  let w=Infinity,s2=Infinity,e=-Infinity,n=-Infinity;
+  for(const p of pts){
+    const cart=mainViewer.camera.pickEllipsoid(new Cesium.Cartesian2(p[0],p[1]),ell);
+    if(!cart)return null;
+    const cg=Cesium.Cartographic.fromCartesian(cart);
+    const lon=Cesium.Math.toDegrees(cg.longitude),lat=Cesium.Math.toDegrees(cg.latitude);
+    if(lon<w)w=lon; if(lon>e)e=lon; if(lat<s2)s2=lat; if(lat>n)n=lat;
+  }
+  return [w,s2,e,n];
+}
+// identical re-windowing to layers.html prepFlowField (row 0 = north, knots)
+function rPrepFlowField(field,h,kind,bounds){
+  const NW=64,NH=40,lonW=bounds[0],latS=bounds[1],lonE=bounds[2],latN=bounds[3];
+  const u=new Float32Array(NW*NH),v=new Float32Array(NW*NH);
+  const Wx=window.WxField,LM=window.LandMask,maskLand=kind==='cur'&&LM&&LM.isReady&&LM.isReady();
+  const g=field.grid;
+  const gLatMin=g.lat0,gLatMax=g.lat0+(g.nLat-1)*g.dLat;
+  const gLonMin=g.lon0,gLonMax=g.lon0+(g.nLon-1)*g.dLon;
+  let land=null;
+  if(maskLand){
+    land=new Uint8Array(NW*NH);
+    for(let r=0;r<NH;r++){ const lat=latN-(r/(NH-1))*(latN-latS);
+      for(let c=0;c<NW;c++){ const lon=lonW+(c/(NW-1))*(lonE-lonW);
+        if(LM.pointOnLand(lat,lon))land[r*NW+c]=1; } }
+    const dil=new Uint8Array(land);
+    for(let r=0;r<NH;r++)for(let c=0;c<NW;c++){ if(!land[r*NW+c])continue;
+      for(let dr=-1;dr<=1;dr++)for(let dc=-1;dc<=1;dc++){ const rr=r+dr,cc=c+dc;
+        if(rr>=0&&rr<NH&&cc>=0&&cc<NW)dil[rr*NW+cc]=1; } }
+    land=dil;
+  }
+  for(let r=0;r<NH;r++){ const lat=latN-(r/(NH-1))*(latN-latS);
+    const sLat=Math.max(gLatMin,Math.min(gLatMax,lat));
+    for(let c=0;c<NW;c++){ const lon=lonW+(c/(NW-1))*(lonE-lonW);
+      const sLon=Math.max(gLonMin,Math.min(gLonMax,lon));
+      let uu=0,vv=0;
+      if(!(land&&land[r*NW+c])){
+        const smp=Wx.sample(field,sLat,sLon,h);
+        if(smp){ const rad=smp.dir*Math.PI/180;
+          if(kind==='wind'){ uu=-smp.speed*Math.sin(rad); vv=-smp.speed*Math.cos(rad); }
+          else { uu=smp.speed*Math.sin(rad); vv=smp.speed*Math.cos(rad); } }
+      }
+      u[r*NW+c]=uu; v[r*NW+c]=vv;
+    } }
+  return { width:NW, height:NH, u:u, v:v, bounds:bounds };
+}
+function rFlowInvalidate(){ rFlowWindHour=-1; rFlowCurHour=-1; }
+function rFlowUpdate(){
+  const on=vizMode==='flow'&&(vizWindField||vizCurField);
+  const cv=document.getElementById('flowCanvas');
+  if(!on){ cv.style.display='none'; if(rflow)rflow.stop(); return; }
+  const bounds=rFlowBounds();
+  if(!bounds){ cv.style.display='none'; if(rflow)rflow.stop(); return; }
+  rFlowInit(); if(!rflow)return;
+  cv.style.display=''; rflow.start();
+  rflowWind.enabled=vizWindShown&&!!vizWindField;
+  rflowCur.enabled=vizCurShown&&!!vizCurField;
+  if(vizWindField){
+    const tw=fieldT(vizWindField), w0=Math.floor(tw), w1=Math.min(vizWindField.times.length-1,w0+1);
+    if(w0!==rFlowWindHour){ rFlowWindHour=w0;
+      rflowWind.setFields(rPrepFlowField(vizWindField,w0,'wind',bounds),rPrepFlowField(vizWindField,w1,'wind',bounds)); }
+    rflowWind.setFieldMix(tw-w0);
+  }
+  if(vizCurField){
+    const tc=fieldT(vizCurField), c0=Math.floor(tc), c1=Math.min(vizCurField.times.length-1,c0+1);
+    if(c0!==rFlowCurHour){ rFlowCurHour=c0;
+      rflowCur.setFields(rPrepFlowField(vizCurField,c0,'cur',bounds),rPrepFlowField(vizCurField,c1,'cur',bounds)); }
+    rflowCur.setFieldMix(tc-c0);
+  }
+}
+function applyVizMode(){
+  localStorage.setItem('meridian.routing.vizmode',vizMode);
+  document.getElementById('flowBtn').classList.toggle('active',vizMode==='flow');
+  document.getElementById('linesBtn').classList.toggle('active',vizMode==='lines');
+  if(vizMode==='flow'){ if(vizLines){vizLines.removeAll();vizPoints.removeAll();} vizLastKey=''; rFlowInvalidate(); rFlowUpdate(); }
+  else { if(rflow)rflow.stop(); document.getElementById('flowCanvas').style.display='none'; renderFieldViz(true); }
 }
 
 // ════════════════════ ETA histogram (SVG) ════════════════════
@@ -1302,10 +1404,13 @@ async function main(){
   document.getElementById('playBtn').addEventListener('click',()=>setPlaying(!playing));
   document.getElementById('windBtn').addEventListener('click',()=>{ vizWindShown=!vizWindShown;
     localStorage.setItem('meridian.routing.windViz',vizWindShown?'1':'0');
-    document.getElementById('windBtn').classList.toggle('active',vizWindShown); renderFieldViz(true); });
+    document.getElementById('windBtn').classList.toggle('active',vizWindShown); renderFieldViz(true); rFlowUpdate(); });
   document.getElementById('curBtn').addEventListener('click',()=>{ vizCurShown=!vizCurShown;
     localStorage.setItem('meridian.routing.curViz',vizCurShown?'1':'0');
-    document.getElementById('curBtn').classList.toggle('active',vizCurShown); renderFieldViz(true); });
+    document.getElementById('curBtn').classList.toggle('active',vizCurShown); renderFieldViz(true); rFlowUpdate(); });
+  document.getElementById('flowBtn').addEventListener('click',()=>{ vizMode='flow'; applyVizMode(); });
+  document.getElementById('linesBtn').addEventListener('click',()=>{ vizMode='lines'; applyVizMode(); });
+  applyVizMode();
   document.getElementById('fleetBtn').addEventListener('click',()=>{ fleetShown=!fleetShown;
     for(const ent of fleetEntities)ent.show=fleetShown;
     document.getElementById('fleetBtn').classList.toggle('active',fleetShown); });
