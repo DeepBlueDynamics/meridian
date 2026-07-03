@@ -113,7 +113,7 @@
     <div class="pane">
       <div id="map"></div>
       <!-- transparent particle-flow overlay (FLOW mode); never intercepts the map -->
-      <canvas id="flowCanvas" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:2;display:none;"></canvas>
+      <canvas id="flowCanvas" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:2;display:none;transition:opacity .25s;"></canvas>
       <div class="tag" id="paneTag"><b>Forecast fields</b> · wind white · current blue √scale · no arrowheads</div>
 
       <div class="navdata" id="navdata">
@@ -493,6 +493,11 @@ function flowUpdate() {
   if (!on) { if (flow) flow.stop(); return; }
   flowInit(); if (!flow) return;
   flow.start();
+  // match routing: zoomed in = half the particles — harbor scales don't
+  // need the full open-ocean fleet of specks
+  const dense = map.getZoom() < 7;
+  if (flow._dense !== dense) { flow._dense = dense;
+    flowWind.setNumParticles(dense ? 2600 : 1300); flowCur.setNumParticles(dense ? 1600 : 800); }
   const bounds = flowBounds();
   flowWind.enabled = showWind; flowCur.enabled = showCur;
   const tw = Math.max(0, Math.min(windField.times.length - 1, tFor(windField)));
