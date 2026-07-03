@@ -322,8 +322,10 @@ setInterval(tickAge, 60000);
 // ── screen-grid resample + render ─────────────────────────────────────────
 function resample() {
   const c = map.getCanvas();
+  const zq = map.getZoom();
+  const spacing = zq < 4.5 ? 92 : zq < 6.5 ? 68 : 48;
   samples = FL.screenGridSamples({
-    width: c.clientWidth, height: c.clientHeight, spacingPx: 48,
+    width: c.clientWidth, height: c.clientHeight, spacingPx: spacing,
     unproject: (px) => { const ll = map.unproject(px); return [ll.lng, ll.lat]; },
   });
   const LM = window.LandMask;

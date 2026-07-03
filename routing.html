@@ -833,7 +833,11 @@ function vizSamples(){
   const {glats,glons}=gridAxes();
   const la0=glats[0],la1=glats[glats.length-1],lo0=glons[0],lo1=glons[glons.length-1];
   const scratch=new Cesium.Cartesian2();
-  const all=FL.screenGridSamples({ width:c.clientWidth, height:c.clientHeight, spacingPx:52,
+  // zoomed out = sparser sampling: a fixed 52 px grid reads as a wall of
+  // lines at ocean scales
+  const zq=cesiumZoomEquiv();
+  const spacing=zq<4.5?92:zq<6.5?68:52;
+  const all=FL.screenGridSamples({ width:c.clientWidth, height:c.clientHeight, spacingPx:spacing,
     unproject:(px)=>{ scratch.x=px[0]; scratch.y=px[1];
       const cart=mainViewer.camera.pickEllipsoid(scratch,ell); if(!cart)return null;
       const cg=Cesium.Cartographic.fromCartesian(cart);
