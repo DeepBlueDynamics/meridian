@@ -78,6 +78,20 @@ fn seg_intersects_box(p1: LL, p2: LL, b: &LandBox) -> bool {
         && t0 <= t1
 }
 
+/// router.js onLand (L133–137) — point-in-any-box with the open-Atlantic
+/// fast path. Public: anchor snapping must reject box-interior points.
+pub fn on_land_boxes(lat: f64, lon: f64) -> bool {
+    if lat > 32.6 && lat < 40.5 {
+        return false;
+    }
+    for b in &LAND {
+        if lat >= b.s && lat <= b.n && lon >= b.w && lon <= b.e {
+            return true;
+        }
+    }
+    false
+}
+
 /// router.js segmentClear (L156–162) — boxes + open-Atlantic fast path.
 fn segment_clear_boxes(p1: LL, p2: LL) -> bool {
     if p1.lat > 32.6 && p1.lat < 40.5 && p2.lat > 32.6 && p2.lat < 40.5 {

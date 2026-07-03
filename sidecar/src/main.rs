@@ -11,6 +11,7 @@
 
 mod bridge;
 mod mcp;
+mod route_api;
 mod upstream;
 
 use clap::Parser;
@@ -40,12 +41,23 @@ async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     let b = bridge::Bridge::new();
     let state = bridge::AppState { bridge: b.clone() };
+    let jobs = route_api::RouteJobs::default();
+
+    let route_routes = axum::Router::new()
+        .route("/route/compute", axum::routing::post(route_api::post_compute))
+        .route("/route/status/{id}", axum::routing::get(route_api::get_status))
+        .route("/route/result/{id}", axum::routing::get(route_api::get_result))
+        .route("/route/cancel/{id}", axum::routing::post(route_api::post_cancel))
+        // a full 51-member ensemble request is ~5-8MB; axum defaults to 2MB
+        .layer(axum::extract::DefaultBodyLimit::max(32 * 1024 * 1024))
+        .with_state(jobs.clone());
 
     let app = axum::Router::new()
         .route("/health", axum::routing::get(|| async { "ok" }))
         .route("/ws", axum::routing::get(bridge::ws_handler))
         .with_state(state)
-        .nest_service("/mcp", mcp::streamable_http_service(b));
+        .merge(route_routes)
+        .nest_service("/mcp", mcp::streamable_http_service(b, jobs));
 
     let addr = std::net::SocketAddr::new(args.bind, args.port);
     let listener = match tokio::net::TcpListener::bind(addr).await {

@@ -121,6 +121,21 @@ pub struct RadioTranscriptionsRequest {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct RouteComputeRequest {
+    /// Full route request (same shape routing.html's buildRouteRequest() produces:
+    /// raw_start/raw_dest, vessel polar, motoring, members, wind_results, ...).
+    pub request: serde_json::Value,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct RouteStatusRequest {
+    /// Job id returned by route_compute.
+    pub job_id: String,
+    /// Also fetch the result when done (default false — results are large).
+    pub include_result: Option<bool>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct SimCallRequest {
     /// skiff API path: "/healthz" or "/v1/sim/{state|control|environment|position|reset}".
     pub path: String,
@@ -165,15 +180,17 @@ fn telemetry_path() -> Option<std::path::PathBuf> {
 pub struct MeridianMcp {
     tool_router: ToolRouter<Self>,
     bridge: Bridge,
+    jobs: crate::route_api::RouteJobs,
     client: reqwest::Client,
 }
 
 #[tool_router]
 impl MeridianMcp {
-    pub fn new(bridge: Bridge) -> Self {
+    pub fn new(bridge: Bridge, jobs: crate::route_api::RouteJobs) -> Self {
         Self {
             tool_router: Self::tool_router(),
             bridge,
+            jobs,
             client: upstream::client(),
         }
     }
@@ -367,6 +384,35 @@ impl MeridianMcp {
         }
     }
 
+    // ── isochrone route engine (in-process — the ported lib/router.js) ───
+
+    #[tool(description = "Start an isochrone fleet-routing job on the sidecar's Rust engine. Takes the full route request (the shape routing.html's buildRouteRequest() produces — vessel polar, ensemble members, inline forecast series). Returns a job_id; poll with route_status. One job at a time (409-style text if busy).")]
+    async fn route_compute(&self, Parameters(req): Parameters<RouteComputeRequest>) -> Result<CallToolResult, ErrorData> {
+        let parsed: crate::route_api::RouteRequestWire = match serde_json::from_value(req.request) {
+            Ok(p) => p,
+            Err(e) => return Ok(text_ok(format!("bad request: {e} — the shape must match buildRouteRequest()"))),
+        };
+        match self.jobs.try_start(parsed) {
+            Ok(id) => Ok(text_ok(serde_json::json!({"job_id": id}).to_string())),
+            Err(active) => Ok(text_ok(format!(
+                "a route job is already running ({active}) — poll route_status or cancel via POST /route/cancel/{active}"
+            ))),
+        }
+    }
+
+    #[tool(description = "Status of a route job: state (loading_landmask | building_raster | routing | done | error | cancelled), raster progress, members done/total. include_result=true also returns the full result when done (large).")]
+    async fn route_status(&self, Parameters(req): Parameters<RouteStatusRequest>) -> Result<CallToolResult, ErrorData> {
+        let Some(mut status) = self.jobs.status_value(&req.job_id) else {
+            return Ok(text_ok("unknown job id — the sidecar may have restarted; start a new route_compute"));
+        };
+        if req.include_result.unwrap_or(false) {
+            if let Some(Some(result)) = self.jobs.result_value(&req.job_id) {
+                status["result"] = result;
+            }
+        }
+        Ok(text_ok(status.to_string()))
+    }
+
     // ── skiff simulator passthrough (:8081 — young contract) ─────────────
 
     #[tool(description = "Call the skiff boat-simulator API (GET /healthz, GET /v1/sim/state, POST /v1/sim/control|environment|position|reset). Payload shapes follow skiff and may change; this tool envelope will not. The sim feeds Signal K — Meridian sees the boat through its Signal K connection, not through this tool.")]
@@ -428,10 +474,11 @@ impl ServerHandler for MeridianMcp {
 /// (Hyperia learned this live; see its mcp.rs for the war story.)
 pub fn streamable_http_service(
     bridge: Bridge,
+    jobs: crate::route_api::RouteJobs,
 ) -> rmcp::transport::streamable_http_server::StreamableHttpService<MeridianMcp> {
     use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService};
     StreamableHttpService::new(
-        move || Ok(MeridianMcp::new(bridge.clone())),
+        move || Ok(MeridianMcp::new(bridge.clone(), jobs.clone())),
         Default::default(),
         StreamableHttpServerConfig {
             stateful_mode: false,

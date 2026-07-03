@@ -340,9 +340,15 @@ impl<'a> Raster<'a> {
             self.mask.point_on_land(lat, lon)
         }
     }
-    /// Anchor snapping on the DILATED raster — 20° bearings.
-    pub fn nearest_water(&self, lat: f64, lon: f64, max_nm: i64) -> Option<LL> {
-        if !self.point_on_land(lat, lon) {
+    /// Anchor snapping on the DILATED raster — 20° bearings. `acceptable`
+    /// adds caller constraints (the engine's hand LAND boxes: raster-water
+    /// inside a box has zero legal legs — the Newport→Sakonnet strand).
+    /// Mirrors lib/landmask.js raster nearestWater exactly.
+    pub fn nearest_water(&self, lat: f64, lon: f64, max_nm: i64, acceptable: Option<&dyn Fn(f64, f64) -> bool>) -> Option<LL> {
+        let ok = |la: f64, lo: f64| -> bool {
+            !self.point_on_land(la, lo) && acceptable.map_or(true, |a| a(la, lo))
+        };
+        if ok(lat, lon) {
             return Some(LL { lat, lon });
         }
         for r in 1..=max_nm {
@@ -352,7 +358,7 @@ impl<'a> Raster<'a> {
                     lat: lat + (r as f64 / 60.0) * jm::cos(b * std::f64::consts::PI / 180.0),
                     lon: lon + (r as f64 / (60.0 * jm::cos(lat * std::f64::consts::PI / 180.0))) * jm::sin(b * std::f64::consts::PI / 180.0),
                 };
-                if !self.point_on_land(p.lat, p.lon) {
+                if ok(p.lat, p.lon) {
                     return Some(p);
                 }
                 b += 20.0;
@@ -402,8 +408,15 @@ pub fn prepare_corridor<'a>(
     let w = jm::js_min(raw_start.lon, raw_dest.lon) - 4.0;
     let e = jm::js_max(raw_start.lon, raw_dest.lon) + 4.0;
     let raster = mask.build_raster(w, s, e, n, 0.02, progress);
-    let dep_anchor = raster.nearest_water(raw_start.lat, raw_start.lon, 60).ok_or(CorridorError::LandlockedStart)?;
-    let arr_anchor = raster.nearest_water(raw_dest.lat, raw_dest.lon, 60).ok_or(CorridorError::LandlockedDest)?;
+    // Anchors must clear the engine's hand LAND boxes too (routing.html
+    // passes the same predicate to the JS raster nearestWater).
+    let box_clear = |la: f64, lo: f64| !super::engine::on_land_boxes(la, lo);
+    let dep_anchor = raster
+        .nearest_water(raw_start.lat, raw_start.lon, 60, Some(&box_clear))
+        .ok_or(CorridorError::LandlockedStart)?;
+    let arr_anchor = raster
+        .nearest_water(raw_dest.lat, raw_dest.lon, 60, Some(&box_clear))
+        .ok_or(CorridorError::LandlockedDest)?;
     Ok(Corridor { raster, dep_anchor, arr_anchor })
 }
 

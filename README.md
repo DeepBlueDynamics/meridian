@@ -59,13 +59,19 @@ from the live ORC fleet; its certificate polar drives the router) unless
 ## Project layout
 
 ```
-electron/        main.js (tile proxy + control server), preload.js
-lib/             router.js (isochrone engine), vessel.js (active-vessel store), orcdata.js (ORC fleet)
+electron/        main.js (tile proxy + control server), preload.js, bridge.js (sidecar WS client)
+sidecar/         meridian-sidecar (Rust): MCP agent surface on :9124 + the isochrone
+                 route engine (route/, bit-parity with lib/router.js — see
+                 spec/2026-06-11/spec-route-sidecar.md). cargo test runs the
+                 math-corpus + golden-fixture parity gates.
+lib/             router.js (JS isochrone engine — fallback), fdmath.js (fdlibm-pinned
+                 trig BOTH engines share), landmask.js, vessel.js, orcdata.js
 index.html       harbor / ocean-stitch view
-routing.html     isochrone-routing view (default)
+routing.html     isochrone-routing view (default; routes via the sidecar, falls back to JS)
 docs/            01 architecture · 02 boundaries & bathy stitch · 03 layered roadmap
-scripts/         convert-s57-to-pmtiles.sh, test-3dtiles-proxy.mjs
-enc_charts/      S-57 ENC source data (San Diego cell)
+scripts/         run.ps1 (full-stack dev runner), gen-math-corpus.mjs +
+                 gen-route-fixture.mjs (parity harness), make-review-zip.mjs, …
+enc_charts/      S-57 ENC source data
 .env             GOOGLE_MAPS_API_KEY (gitignored)
 ```
 
@@ -77,6 +83,13 @@ driving/observation (used during development):
 - `GET /screenshot[?view=dep|arr]` — PNG of the rendered Cesium canvas
 - `POST /eval` (body = JS) — run JS in the renderer (`window.m.*` exposes camera/viewers)
 - `POST /reload` — reload the page
+- `GET/POST /window` — window bounds / resize (recording presets)
+
+The **agent surface** is the Rust sidecar on `127.0.0.1:9124`: MCP over
+streamable HTTP at `/mcp` (15+ tools — app control, radio, sim, route engine;
+see `sidecar/mcp/README.md`) and the route job API
+(`POST /route/compute`, `GET /route/status/{id}`, `GET /route/result/{id}`,
+`POST /route/cancel/{id}` — contract in `spec/2026-06-11/spec-route-sidecar.md`).
 
 Set `MERIDIAN_DEVTOOLS=1` to open DevTools.
 

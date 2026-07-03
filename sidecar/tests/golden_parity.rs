@@ -144,12 +144,17 @@ fn run_fixture(name: &str) {
     );
 }
 
-#[test]
-fn golden_hawaii_cabo() {
-    run_fixture("hawaii-cabo.json");
-}
+// Fixtures regenerate headless (no app needed — FdMath pins make node
+// bit-identical): node scripts/gen-route-fixture.mjs <name> <lat> <lon> <lat> <lon>
 
 #[test]
 fn golden_newport_bermuda() {
+    // LAND-box corridor + open-Atlantic fast path + Bermuda arrival boxes
     run_fixture("newport-bermuda.json");
+}
+
+#[test]
+fn golden_bahamas() {
+    // island-dense raster corridor (Nassau → Bimini), short + current-heavy
+    run_fixture("bahamas.json");
 }

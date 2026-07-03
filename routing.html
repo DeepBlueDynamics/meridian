@@ -467,8 +467,11 @@ async function refreshLandAnchors(loaderSub){
     // 60 nm reach: geocoders happily return island/state centroids ("Hawaii,
     // United States" sits on Mauna Loa, 40 nm inland) — better to route from
     // the nearest coast than to strand the fleet on a volcano.
-    depAnchor=raster.nearestWater(START.lat,START.lon,60);
-    arrAnchor=raster.nearestWater(DEST.lat,DEST.lon,60);
+    // Anchors must clear the router's hand LAND boxes too — raster-water
+    // inside a box has zero legal legs (Newport→Sakonnet strand, seen live).
+    const boxClear=(la,lo)=>!window.Router.onLand(la,lo);
+    depAnchor=raster.nearestWater(START.lat,START.lon,60,boxClear);
+    arrAnchor=raster.nearestWater(DEST.lat,DEST.lon,60,boxClear);
     if(!depAnchor)throw new Error(`No sailable water within 60 nm of "${START.name}" — pick a coastal departure port.`);
     if(!arrAnchor)throw new Error(`No sailable water within 60 nm of "${DEST.name}" — pick a coastal arrival port.`);
     activeLandGuard=makeLandGuard(depAnchor,arrAnchor,raster);
@@ -888,6 +891,60 @@ function buildRouteRequest(){
       :{sample:{lat:c.sample.lat,lon:c.sample.lon},time_len:0,ocean_current_velocity:null,ocean_current_direction:null}):null,
   };
 }
+// ── fleet routing: Rust sidecar first, local JS engine as silent fallback ──
+// The sidecar (:9124) runs the SAME algorithm off the main thread (bit-parity
+// proven by golden fixtures), so the app stays responsive during compute.
+// Fallback chain per the route.compute contract: cloud (later) → sidecar →
+// local JS. Typed landlocked errors are user errors, not fallback triggers.
+const SIDECAR='http://127.0.0.1:9124';
+let sidecarJobId=null, routeEngine='js';
+async function routeFleetSmart(onPhase){
+  const phase=(text,sub,pct)=>{ try{ onPhase&&onPhase(text,sub,pct); }catch(e){} };
+  try{
+    const req=buildRouteRequest();
+    let r=await fetch(SIDECAR+'/route/compute',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(req)});
+    if(r.status===409){
+      // stale/parallel job (e.g. a reroute racing a boot) — cancel and retry once
+      const j=await r.json();
+      await fetch(`${SIDECAR}/route/cancel/${j.job_id}`,{method:'POST'}).catch(()=>{});
+      await new Promise(s=>setTimeout(s,300));
+      r=await fetch(SIDECAR+'/route/compute',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(req)});
+    }
+    if(!r.ok)throw new Error('sidecar compute HTTP '+r.status);
+    const {job_id}=await r.json();
+    sidecarJobId=job_id;
+    for(;;){
+      await new Promise(s=>setTimeout(s,350));
+      const st=await(await fetch(`${SIDECAR}/route/status/${job_id}`)).json();
+      if(st.state==='building_raster'&&st.raster_rows_total>0)
+        phase('Preparing coastline mask',`Coastline raster · ${Math.round(st.raster_rows_done/st.raster_rows_total*100)}%`,55);
+      else if(st.state==='routing')
+        phase(`Isochrone routing · ${st.member_total} members`,`Optimal route · member ${st.member_done}/${st.member_total}`,70+(st.member_done/Math.max(1,st.member_total))*30);
+      if(st.state==='done')break;
+      if(st.state==='error'){
+        const err=new Error((st.error&&st.error.message)||'route job failed');
+        err.typed=st.error&&st.error.code; throw err;
+      }
+      if(st.state==='cancelled')throw new Error('route job cancelled');
+    }
+    const res=await(await fetch(`${SIDECAR}/route/result/${job_id}`)).json();
+    depAnchor=res.anchors.dep; arrAnchor=res.anchors.arr;
+    if(res.landmask_mode!=='full')console.warn('[routing] sidecar routed boxes-only (landmask unavailable)');
+    routeEngine='sidecar';
+    console.log('[routing] sidecar fleet:',res.routes.length,'members ·',JSON.stringify(res.timings_ms));
+    return res.routes;
+  }catch(e){
+    if(e.typed==='landlocked_start'||e.typed==='landlocked_dest')
+      throw new Error(e.message+' Pick a coastal port.');
+    console.warn('[routing] sidecar unavailable — local JS engine:',e.message);
+    if(window.Telemetry)window.Telemetry.send('route-sidecar-fallback',{message:String(e.message)});
+    routeEngine='js';
+    phase('Preparing coastline mask','',55);
+    await refreshLandAnchors({set textContent(v){ phase('Preparing coastline mask',v,60); }});
+    phase(`Isochrone routing · ${parsedMembers.length} members`,'',70);
+    return await window.Router.routeFleet(parsedMembers,makeEnv(),(i,n)=>phase(`Isochrone routing · ${n} members`,`Optimal route · member ${i}/${n}`,70+i/n*30));
+  }
+}
 let rerouting=false,rerouteQueued=false;
 async function rerouteAndRender(){
   if(!currentWindResults||!parsedMembers)return;
@@ -895,7 +952,7 @@ async function rerouteAndRender(){
   rerouting=true;
   if(infoPane)infoPane.classList.add('recomputing');
   const stamp=document.getElementById('liveStamp'),stampText=stamp.textContent;
-  const routes=await window.Router.routeFleet(parsedMembers,makeEnv(),(i,n)=>{ stamp.textContent=`Routing ${i}/${n}`; });
+  const routes=await routeFleetSmart((text,sub)=>{ stamp.textContent=sub||text; });
   stamp.textContent=stampText;
   lastRoutes=routes;
   const kept=markOutliers(routes);
@@ -971,10 +1028,10 @@ async function loadLiveAndRoute(){
     const MON=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
     const fd=forecastIssueDate;
     document.getElementById('forecastIssue').textContent=`${fd.getUTCDate()} ${MON[fd.getUTCMonth()]} ${fd.getUTCFullYear()}`;
-    loaderText.textContent='Preparing coastline mask';
-    await refreshLandAnchors(loaderSub);
-    loaderText.textContent=`Isochrone routing · ${members.length} members`;
-    const routes=await window.Router.routeFleet(members,makeEnv(),(i,n)=>{ loaderSub.textContent=`Optimal route · member ${i}/${n}`; loaderBar.style.width=(70+i/n*30)+'%'; });
+    const routes=await routeFleetSmart((text,sub,pct)=>{
+      loaderText.textContent=text; if(sub!==undefined)loaderSub.textContent=sub;
+      if(pct!==undefined)loaderBar.style.width=pct+'%';
+    });
     if(!routes.some(r=>r.path.length>=2))
       throw new Error('The fleet could not leave the departure anchor — it appears to be landlocked. Pick a coastal departure port.');
     lastRoutes=routes;
