@@ -5,7 +5,11 @@
 //! engine is binary — one flipped branch reroutes a member — so parity is
 //! proven bit-exact by golden fixtures, not tolerances.
 
+pub mod engine;
 pub mod fdlibm;
+pub mod forecast;
 pub mod geo;
 pub mod jsmath;
+pub mod landmask;
 pub mod polar;
+pub mod types;

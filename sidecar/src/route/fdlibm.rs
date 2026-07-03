@@ -199,3 +199,156 @@ pub fn cos(x: f64) -> f64 {
         }
     }
 }
+
+// ── atan / atan2 (fdlibm s_atan.c / e_atan2.c) — V8 engines disagree with
+// each other on atan2 too (measured), so it's pinned like sin/cos. Mirror of
+// lib/fdmath.js — THESE MUST CHANGE TOGETHER. ──────────────────────────────
+
+#[inline]
+fn low_word(x: f64) -> i32 {
+    x.to_bits() as u32 as i32
+}
+
+const ATANHI: [f64; 4] = [
+    4.63647609000806093515e-01,
+    7.85398163397448278999e-01,
+    9.82793723247329054082e-01,
+    1.57079632679489655800e+00,
+];
+const ATANLO: [f64; 4] = [
+    2.26987774529616870924e-17,
+    3.06161699786838301793e-17,
+    1.39033110312309984516e-17,
+    6.12323399573676603587e-17,
+];
+const AT: [f64; 11] = [
+    3.33333333333329318027e-01,
+    -1.99999999998764832476e-01,
+    1.42857142725034663711e-01,
+    -1.11111104054623557880e-01,
+    9.09088713343650656196e-02,
+    -7.69187620504482999495e-02,
+    6.66107313738753120669e-02,
+    -5.83357013379057348645e-02,
+    4.97687799461593236017e-02,
+    -3.65315727442169155270e-02,
+    1.62858201153657823623e-02,
+];
+
+pub fn atan(mut x: f64) -> f64 {
+    let hx = high_word(x);
+    let ix = hx & 0x7fffffff;
+    if ix >= 0x44100000 {
+        // |x| >= 2^66
+        if x.is_nan() {
+            return x + x;
+        }
+        return if hx > 0 { ATANHI[3] + ATANLO[3] } else { -ATANHI[3] - ATANLO[3] };
+    }
+    let id: i32;
+    if ix < 0x3fdc0000 {
+        // |x| < 0.4375
+        if ix < 0x3e200000 {
+            // |x| < 2^-29
+            return x;
+        }
+        id = -1;
+    } else {
+        x = x.abs();
+        if ix < 0x3ff30000 {
+            // |x| < 1.1875
+            if ix < 0x3fe60000 {
+                id = 0;
+                x = (2.0 * x - 1.0) / (2.0 + x);
+            } else {
+                id = 1;
+                x = (x - 1.0) / (x + 1.0);
+            }
+        } else if ix < 0x40038000 {
+            id = 2;
+            x = (x - 1.5) / (1.0 + 1.5 * x);
+        } else {
+            id = 3;
+            x = -1.0 / x;
+        }
+    }
+    let z = x * x;
+    let w = z * z;
+    let s1 = z * (AT[0] + w * (AT[2] + w * (AT[4] + w * (AT[6] + w * (AT[8] + w * AT[10])))));
+    let s2 = w * (AT[1] + w * (AT[3] + w * (AT[5] + w * (AT[7] + w * AT[9]))));
+    if id < 0 {
+        return x - x * (s1 + s2);
+    }
+    let zz = ATANHI[id as usize] - ((x * (s1 + s2) - ATANLO[id as usize]) - x);
+    if hx < 0 { -zz } else { zz }
+}
+
+const PI_O_4: f64 = 7.8539816339744827900e-01;
+const PI_O_2: f64 = 1.5707963267948965580e+00;
+const PI_F: f64 = 3.1415926535897931160e+00;
+const PI_LO: f64 = 1.2246467991473531772e-16;
+const TINY: f64 = 1.0e-300;
+
+pub fn atan2(y: f64, x: f64) -> f64 {
+    if x.is_nan() || y.is_nan() {
+        return x + y;
+    }
+    let hx = high_word(x);
+    let ix = hx & 0x7fffffff;
+    let lx = low_word(x);
+    let hy = high_word(y);
+    let iy = hy & 0x7fffffff;
+    let ly = low_word(y);
+    if hx == 0x3ff00000 && lx == 0 {
+        // x == 1.0
+        return atan(y);
+    }
+    let m = ((hy >> 31) & 1) | ((hx >> 30) & 2);
+    if (iy | ly) == 0 {
+        // y = 0
+        return match m {
+            0 | 1 => y,
+            2 => PI_F + TINY,
+            _ => -PI_F - TINY,
+        };
+    }
+    if (ix | lx) == 0 {
+        // x = 0
+        return if hy < 0 { -PI_O_2 - TINY } else { PI_O_2 + TINY };
+    }
+    if ix == 0x7ff00000 {
+        // x = ±inf
+        if iy == 0x7ff00000 {
+            return match m {
+                0 => PI_O_4 + TINY,
+                1 => -PI_O_4 - TINY,
+                2 => 3.0 * PI_O_4 + TINY,
+                _ => -3.0 * PI_O_4 - TINY,
+            };
+        }
+        return match m {
+            0 => 0.0,
+            1 => -0.0,
+            2 => PI_F + TINY,
+            _ => -PI_F - TINY,
+        };
+    }
+    if iy == 0x7ff00000 {
+        // y = ±inf
+        return if hy < 0 { -PI_O_2 - TINY } else { PI_O_2 + TINY };
+    }
+    let k = (iy - ix) >> 20;
+    let z = if k > 60 {
+        PI_O_2 + 0.5 * PI_LO
+    } else if hx < 0 && k < -60 {
+        0.0
+    } else {
+        atan((y / x).abs())
+    };
+    match m {
+        0 => z,
+        1 => -z,
+        2 => PI_F - (z - PI_LO),
+        _ => (z - PI_LO) - PI_F,
+    }
+}

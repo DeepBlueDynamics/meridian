@@ -26,7 +26,11 @@ rmcp = { version = "0.15", features = ["server", "macros", "transport-streamable
 schemars = "1.0"
 
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# float_roundtrip is LOAD-BEARING for route parity: serde_json's default
+# float parse is a fast path that can be 1 ulp off correctly-rounded — every
+# forecast value and fixture pin would silently corrupt (caught live by the
+# golden test: anchor lon off by 1 ulp through JSON, math was exact).
+serde_json = { version = "1", features = ["float_roundtrip"] }
 
 # Upstream proxies: Meridian Radio (:9080) and the skiff simulator (:8081)
 reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }

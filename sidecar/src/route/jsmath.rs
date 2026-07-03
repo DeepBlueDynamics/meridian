@@ -13,8 +13,11 @@
 //!   rem_euclid — for tiny negative x, `x + 360` rounds to exactly 360.0
 //!   and rem_euclid would return 360.0 where JS returns 0.0.
 
-// sin/cos: vendored fdlibm 5.3 (libm's musl kernels drift 1 ulp from V8 on
-// ~0.9% of inputs — caught by the corpus test). asin/atan2: libm bit-matches.
+// sin/cos/atan2: vendored fdlibm 5.3 — the parity anchor for BOTH engines.
+// V8 versions disagree with each other on these (Electron 13.0 vs node 13.6,
+// measured 1 ulp), so the JS engine uses lib/fdmath.js (same transliteration)
+// and both sides are pinned to the algorithm, not a browser build.
+// asin: libm — measured identical across engines (correctly rounded).
 #[inline]
 pub fn sin(x: f64) -> f64 {
     super::fdlibm::sin(x)
@@ -29,7 +32,7 @@ pub fn asin(x: f64) -> f64 {
 }
 #[inline]
 pub fn atan2(y: f64, x: f64) -> f64 {
-    libm::atan2(y, x)
+    super::fdlibm::atan2(y, x)
 }
 /// Math.sqrt is correctly rounded everywhere — hardware sqrt is exact.
 #[inline]
