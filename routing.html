@@ -217,6 +217,7 @@
         <div id="mainView" class="cz"></div>
         <canvas id="flowCanvas" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:4;display:none;transition:opacity .25s;"></canvas>
         <div class="tag"><b>Passage</b> · isochrone ensemble on Google 3D Tiles</div>
+        <div class="tag" id="rangeNotice" style="left:auto;right:14px;top:auto;bottom:64px;display:none;border-color:var(--warn);color:var(--warn)"></div>
         <div class="scrubbar" id="scrubbar" style="display:none">
           <button class="sbtn" id="playBtn" title="Play / pause passage">▶</button>
           <input id="scrub" type="range" min="0" max="120" step="1" value="0" />
@@ -307,8 +308,8 @@
         <div class="motor-params">
           <label>Motor <input id="motorKt" type="number" min="2" max="12" step="0.5" /> kt</label>
           <label>Min VMG <input id="motorThresh" type="number" min="1" max="8" step="0.5" /> kt</label>
+          <button id="recalcBtn" title="Recalculate route (bypasses the cache)" style="margin-left:auto;background:transparent;border:1px solid var(--line-bright);color:var(--ink-dim);border-radius:3px;padding:2px 8px;cursor:pointer;font-size:13px;line-height:1.3">♻</button>
         </div>
-        <button class="btn" id="recalcBtn" style="margin-top:8px" title="Bypass the route cache and recompute">⟳ Recalculate route</button>
       </div>
 
       <div>
@@ -427,16 +428,18 @@ let ROUTE=loadRoute();
 let START=ROUTE.dep, DEST=ROUTE.arr;
 // Forecast sample points: evenly spaced along the current leg (the router
 // IDW-interpolates between them, so they must track the route endpoints).
-function computeSamples(){ const n=6,out=[];
+function computeSamplesFor(a,b){ const n=6,out=[];
   for(let i=0;i<n;i++){ const f=i/(n-1);
-    out.push({ lat:+(START.lat+(DEST.lat-START.lat)*f).toFixed(2), lon:+(START.lon+(DEST.lon-START.lon)*f).toFixed(2) }); }
+    out.push({ lat:+(a.lat+(b.lat-a.lat)*f).toFixed(2), lon:+(a.lon+(b.lon-a.lon)*f).toFixed(2) }); }
   return out; }
+function computeSamples(){ return computeSamplesFor(START,DEST); }
 let WIND_SAMPLES=computeSamples();
 // 360 h = the full 15-day ECMWF window — a 2,000 nm passage (Hawaii→Marquesas)
 // needs ~300 h; the old 240 h cap guaranteed zero arrivals on long legs.
-// 720 h: the engine sails on persistence beyond the 15-day forecast, so
-// ~4,000 nm passages can actually finish instead of parking at the horizon.
-const MAX_HOURS=720, ARRIVAL_TOL_NM=5;
+// 720 h default: the engine sails on persistence beyond the 15-day
+// forecast. Range limit is config-backed (meridian.routing.maxHours) —
+// the MAX RANGE notice points here.
+const MAX_HOURS=+(localStorage.getItem('meridian.routing.maxHours')||720), ARRIVAL_TOL_NM=5;
 
 // Motoring settings (PredictWind-style threshold model), persisted.
 function loadMotoring(){
@@ -525,12 +528,12 @@ const FCDB={
   async load(key){ try{ const db=await this.open(); return await new Promise((res,rej)=>{ const r=db.transaction('forecast').objectStore('forecast').get(key);
     r.onsuccess=()=>res(r.result||null); r.onerror=()=>rej(r.error); }); }catch(e){ return null; } } };
 const forecastCacheKey=()=>`${START.lat.toFixed(2)},${START.lon.toFixed(2)}->${DEST.lat.toFixed(2)},${DEST.lon.toFixed(2)}`;
-async function fetchAllWinds(){ const bar=document.getElementById('loaderBar'),sub=document.getElementById('loaderSub'),results=[];
-  for(let i=0;i<WIND_SAMPLES.length;i++){ sub.textContent=`Wind · sample ${i+1}/${WIND_SAMPLES.length}`; results.push({sample:WIND_SAMPLES[i],data:await fetchEnsembleWind(WIND_SAMPLES[i])}); bar.style.width=((i+1)/WIND_SAMPLES.length*40)+'%'; } return results; }
+async function fetchAllWinds(samples=WIND_SAMPLES){ const bar=document.getElementById('loaderBar'),sub=document.getElementById('loaderSub'),results=[];
+  for(let i=0;i<samples.length;i++){ sub.textContent=`Wind · sample ${i+1}/${samples.length}`; results.push({sample:samples[i],data:await fetchEnsembleWind(samples[i])}); bar.style.width=((i+1)/samples.length*40)+'%'; } return results; }
 async function fetchMarineCurrents(sample){ const url=`https://marine-api.open-meteo.com/v1/marine?latitude=${sample.lat}&longitude=${sample.lon}&hourly=ocean_current_velocity,ocean_current_direction&forecast_days=8&cell_selection=sea`;
   const r=await fetch(url); if(!r.ok)throw new Error(`Marine HTTP ${r.status}`); const data=await r.json(); if(data.error)throw new Error(`Marine: ${data.reason||''}`); return data; }
-async function fetchAllCurrents(){ const bar=document.getElementById('loaderBar'),sub=document.getElementById('loaderSub'),results=[];
-  for(let i=0;i<WIND_SAMPLES.length;i++){ sub.textContent=`Currents · sample ${i+1}/${WIND_SAMPLES.length}`; try{ results.push({sample:WIND_SAMPLES[i],data:await fetchMarineCurrents(WIND_SAMPLES[i])}); }catch(err){ results.push({sample:WIND_SAMPLES[i],data:null,error:err.message}); } bar.style.width=(40+(i+1)/WIND_SAMPLES.length*30)+'%'; } return results; }
+async function fetchAllCurrents(samples=WIND_SAMPLES){ const bar=document.getElementById('loaderBar'),sub=document.getElementById('loaderSub'),results=[];
+  for(let i=0;i<samples.length;i++){ sub.textContent=`Currents · sample ${i+1}/${samples.length}`; try{ results.push({sample:samples[i],data:await fetchMarineCurrents(samples[i])}); }catch(err){ results.push({sample:samples[i],data:null,error:err.message}); } bar.style.width=(40+(i+1)/samples.length*30)+'%'; } return results; }
 
 // Deterministic wind grid over the corridor (one multi-point call) — drives the
 // wind-field arrow layer; visualization only, the router uses the ensemble.
@@ -576,7 +579,9 @@ function computeEnvelope(routes){ const N=50,envelope=[];
 // the great circle (or that wandered without getting anywhere) is pruned from
 // the picture and counted, not silently blended into the envelope.
 function markOutliers(routes){
-  const gc=gcDistance(START,DEST);
+  // composite passages (canal / Horn) are legitimately much longer than the
+  // direct great circle — compare against the via-route reference instead
+  const gc=compositeCtx?compositeRefNm():gcDistance(START,DEST);
   for(const r of routes){
     let len=0; for(let i=1;i<r.path.length;i++)len+=gcDistance(r.path[i-1],r.path[i]);
     r.pathLen=len;
@@ -1041,26 +1046,28 @@ function makeEnv(){
 // Members carry explicit ordered series keys so the engine never depends on
 // JSON object-key ordering. constraints.min_depth_m is reserved for the
 // shallows-avoidance config (owner directive) — null until depth data lands.
-function buildRouteRequest(){
+function buildRouteRequestFor(o){
   const windSeries=(h)=>{ const out={}; for(const k of Object.keys(h))
     if(k.startsWith('wind_speed_10m')||k.startsWith('wind_direction_10m')) out[k]=h[k]; return out; };
   return {
-    raw_start:{lat:START.lat,lon:START.lon}, raw_dest:{lat:DEST.lat,lon:DEST.lon},
+    raw_start:{lat:o.a.lat,lon:o.a.lon}, raw_dest:{lat:o.b.lat,lon:o.b.lon},
     vessel:{twa:VESSEL.twa,tws:VESSEL.tws,bsp:VESSEL.bsp},
     motoring:{enabled:!!MOTORING.enabled,motorKt:MOTORING.motorKt,thresholdKt:MOTORING.thresholdKt},
-    use_currents:useCurrents, dep_offset_hours:depOffsetHours,
+    use_currents:useCurrents, dep_offset_hours:o.depOffset,
     max_hours:MAX_HOURS, arrival_tol_nm:ARRIVAL_TOL_NM, time_step_h:2,
     constraints:{min_depth_m:null},
-    members:parsedMembers,
-    wind_results:currentWindResults?currentWindResults.map(w=>({sample:{lat:w.sample.lat,lon:w.sample.lon},
+    members:o.members,
+    wind_results:o.windResults?o.windResults.map(w=>({sample:{lat:w.sample.lat,lon:w.sample.lon},
       time_len:w.data.hourly.time.length, series:windSeries(w.data.hourly)})):null,
-    marine_results:marineResults?marineResults.map(c=>c.data?{sample:{lat:c.sample.lat,lon:c.sample.lon},
+    marine_results:o.marineResults?o.marineResults.map(c=>c.data?{sample:{lat:c.sample.lat,lon:c.sample.lon},
       time_len:c.data.hourly.time.length,
       ocean_current_velocity:c.data.hourly.ocean_current_velocity,
       ocean_current_direction:c.data.hourly.ocean_current_direction}
       :{sample:{lat:c.sample.lat,lon:c.sample.lon},time_len:0,ocean_current_velocity:null,ocean_current_direction:null}):null,
   };
 }
+function buildRouteRequest(){ return buildRouteRequestFor({a:START,b:DEST,windResults:currentWindResults,
+  marineResults:marineResults,members:parsedMembers,depOffset:depOffsetHours}); }
 // ── fleet routing: Rust sidecar first, local JS engine as silent fallback ──
 // The sidecar (:9124) runs the SAME algorithm off the main thread (bit-parity
 // proven by golden fixtures), so the app stays responsive during compute.
@@ -1068,10 +1075,112 @@ function buildRouteRequest(){
 // local JS. Typed landlocked errors are user errors, not fallback triggers.
 const SIDECAR='http://127.0.0.1:9124';
 let sidecarJobId=null, routeEngine='js', forceNextRoute=false;
-async function routeFleetSmart(onPhase){
+// ── ocean-basin passage planning: Panama Canal vs Cape Horn ────────────────
+// The isochrone engine can't discover the canal (a land cut, not sailable
+// water), so Atlantic↔Pacific passages become two legs stitched at a
+// waypoint. Cutoff: whichever of canal / Horn gives the shorter great-circle
+// total wins — a far-west-Pacific departure naturally flips to the Horn.
+const CANAL={ atl:{lat:9.40,lon:-79.92}, pac:{lat:8.85,lon:-79.50}, lenNm:45, transitH:30 };
+const HORN={lat:-57.2,lon:-67.0};
+const AMERICAS_DIVIDE=[[70,-160],[60,-166],[50,-128],[40,-124],[32,-117],[20,-105],[12,-86],[9,-79.5],[0,-78.5],[-20,-70.5],[-40,-73.5],[-56,-67.5]];
+function divideLon(lat){ const D=AMERICAS_DIVIDE;
+  if(lat>=D[0][0])return D[0][1];
+  for(let i=0;i<D.length-1;i++){ const la1=D[i][0],lo1=D[i][1],la2=D[i+1][0],lo2=D[i+1][1];
+    if(lat<=la1&&lat>=la2){ const f=(la1-lat)/(la1-la2); return lo1+(lo2-lo1)*f; } }
+  return D[D.length-1][1]; }
+function basinOf(p){ const lon=((p.lon+540)%360)-180;
+  if(p.lat<-56.5)return 'southern';
+  if(lon>=25&&lon<=100)return 'other';
+  if(lon>100)return 'pacific';
+  return lon<divideLon(p.lat)?'pacific':'atlantic'; }
+function planPassage(a,b){
+  const ba=basinOf(a),bb=basinOf(b);
+  if(!((ba==='pacific'&&bb==='atlantic')||(ba==='atlantic'&&bb==='pacific')))return null;
+  const cNear=ba==='atlantic'?CANAL.atl:CANAL.pac, cFar=ba==='atlantic'?CANAL.pac:CANAL.atl;
+  const viaCanal=gcDistance(a,cNear)+CANAL.lenNm+gcDistance(cFar,b);
+  const viaHorn=gcDistance(a,HORN)+gcDistance(HORN,b);
+  if(viaHorn<viaCanal)return { label:'Cape Horn', legs:[[a,HORN],[HORN,b]], transitH:0, refNm:viaHorn };
+  return { label:'Panama Canal', legs:[[a,cNear],[cFar,b]], transitH:CANAL.transitH, refNm:viaCanal };
+}
+let compositeCtx=null;
+function compositeRefNm(){ return compositeCtx?compositeCtx.plan.refNm:0; }
+async function routeComposite(onPhase){
+  const {plan,legs}=compositeCtx;
+  const reqA=buildRouteRequestFor({a:legs[0].a,b:legs[0].b,windResults:legs[0].windResults,
+    marineResults:legs[0].marineResults,members:legs[0].members,depOffset:depOffsetHours});
+  const rA=await routeFleetSmart((t,s2,p)=>onPhase&&onPhase('Leg 1 · '+plan.label,s2||t,p),reqA,{setAnchors:false,jsFallback:false});
+  if(lastJobAnchors)depAnchor=lastJobAnchors.dep;
+  const etas=rA.filter(r=>r.arrived).map(r=>r.etaHours).sort((x,y)=>x-y);
+  const legAEnd=etas.length?etas[Math.floor(etas.length/2)]
+    :Math.max.apply(null,rA.map(r=>r.path.length?r.path[r.path.length-1].time:0));
+  const offB=legAEnd+plan.transitH;
+  const reqB=buildRouteRequestFor({a:legs[1].a,b:legs[1].b,windResults:legs[1].windResults,
+    marineResults:legs[1].marineResults,members:legs[1].members,depOffset:depOffsetHours+offB});
+  const rB=await routeFleetSmart((t,s2,p)=>onPhase&&onPhase('Leg 2 · '+plan.label,s2||t,p),reqB,{setAnchors:false,jsFallback:false});
+  if(lastJobAnchors)arrAnchor=lastJobAnchors.arr;
+  const byId=new Map(rB.map(r=>[r.member,r]));
+  return rA.map(A=>{
+    const B=byId.get(A.member)||rB[0];
+    const transitPts=plan.transitH>0?[
+      { lat:legs[0].b.lat, lon:legs[0].b.lon, time:A.arrived?A.etaHours:legAEnd, bsp:6, tws:0, twa:0, heading:0, curr_kt:0, motor:true },
+      { lat:legs[1].a.lat, lon:legs[1].a.lon, time:offB, bsp:6, tws:0, twa:0, heading:0, curr_kt:0, motor:true } ]:[];
+    const pathB=B.path.map(p=>({lat:p.lat,lon:p.lon,time:p.time+offB,bsp:p.bsp,tws:p.tws,twa:p.twa,heading:p.heading,curr_kt:p.curr_kt,motor:p.motor}));
+    const arrived=A.arrived&&B.arrived;
+    const total=pathB.length?pathB[pathB.length-1].time:offB;
+    const engineHours=A.engineHours+B.engineHours+plan.transitH;
+    return { member:A.member, path:A.path.concat(transitPts,pathB),
+      etaHours:arrived?offB+B.etaHours:null, arrived,
+      maxTws:Math.max(A.maxTws,B.maxTws), avgTws:(A.avgTws+B.avgTws)/2,
+      maxFavorableCurrent:Math.max(A.maxFavorableCurrent,B.maxFavorableCurrent),
+      maxAdverseCurrent:Math.max(A.maxAdverseCurrent,B.maxAdverseCurrent),
+      engineHours, pctMotor:total>0?engineHours/total:0,
+      finalDistance:arrived?0:(A.arrived?B.finalDistance:A.finalDistance) };
+  });
+}
+async function loadCompositeAndRoute(plan,ui){
+  compositeCtx=null;
+  const legs=[];
+  for(let i=0;i<plan.legs.length;i++){
+    const a=plan.legs[i][0], b=plan.legs[i][1];
+    ui.loaderText.textContent='Leg '+(i+1)+'/'+plan.legs.length+' · via '+plan.label;
+    const samples=computeSamplesFor(a,b);
+    const windResults=await fetchAllWinds(samples);
+    const mr=await fetchAllCurrents(samples);
+    legs.push({a,b,samples,windResults,marineResults:mr,members:window.Router.parseMembers(windResults)});
+  }
+  compositeCtx={plan,legs};
+  currentWindResults=legs[0].windResults; marineResults=legs[0].marineResults; parsedMembers=legs[0].members;
+  useCurrents=legs.some(l=>l.marineResults.some(c=>c.data));
+  forecastIssueDate=new Date(legs[0].windResults[0].data.hourly.time[0]+'Z');
+  const MON=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const fd=forecastIssueDate;
+  document.getElementById('forecastIssue').textContent=fd.getUTCDate()+' '+MON[fd.getUTCMonth()]+' '+fd.getUTCFullYear();
+  const routes=await routeComposite((t,s2,p)=>{ ui.loaderText.textContent=t; if(s2!==undefined)ui.loaderSub.textContent=s2;
+    if(p!==undefined)ui.loaderBar.style.width=p+'%'; });
+  positionMiniCameras();
+  if(!routes.some(r=>r.path.length>=2))
+    throw new Error('The fleet could not leave the departure anchor — it appears to be landlocked. Pick a coastal departure port.');
+  lastRoutes=routes;
+  const kept=markOutliers(routes);
+  const envelope=computeEnvelope(kept);
+  renderRoutes3D(kept,envelope); updatePanel(kept,envelope,routes.length-kept.length); buildScrubber(kept);
+  showRangeNotice(kept);
+  document.getElementById('liveStamp').className='live';
+  document.getElementById('liveStamp').textContent='Live · via '+plan.label;
+  renderBoatList(); updateDepClock();
+  ui.loader.classList.add('hidden');
+}
+function showRangeNotice(routes){
+  const el=document.getElementById('rangeNotice'); if(!el)return;
+  const any=routes.some(r=>r.arrived);
+  el.style.display=any?'none':'';
+  if(!any)el.innerHTML='<b>⚠ MAX RANGE</b> · no arrivals within '+MAX_HOURS+' h ('+Math.round(MAX_HOURS/24)+' d) — raise meridian.routing.maxHours (config)';
+}
+async function routeFleetSmart(onPhase,reqOverride,opts){
+  const o=opts||{};
   const phase=(text,sub,pct)=>{ try{ onPhase&&onPhase(text,sub,pct); }catch(e){} };
   try{
-    const req=buildRouteRequest();
+    const req=reqOverride||buildRouteRequest();
     const computeUrl=SIDECAR+'/route/compute'+(forceNextRoute?'?force=1':''); forceNextRoute=false;
     let r=await fetch(computeUrl,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(req)});
     if(r.status===409){
@@ -1099,7 +1208,8 @@ async function routeFleetSmart(onPhase){
       if(st.state==='cancelled')throw new Error('route job cancelled');
     }
     const res=await(await fetch(`${SIDECAR}/route/result/${job_id}`)).json();
-    depAnchor=res.anchors.dep; arrAnchor=res.anchors.arr;
+    lastJobAnchors=res.anchors;
+    if(o.setAnchors!==false){ depAnchor=res.anchors.dep; arrAnchor=res.anchors.arr; }
     if(res.landmask_mode!=='full')console.warn('[routing] sidecar routed boxes-only (landmask unavailable)');
     routeEngine='sidecar';
     console.log('[routing] sidecar fleet:',res.routes.length,'members ·',JSON.stringify(res.timings_ms));
@@ -1107,6 +1217,8 @@ async function routeFleetSmart(onPhase){
   }catch(e){
     if(e.typed==='landlocked_start'||e.typed==='landlocked_dest')
       throw new Error(e.message+' Pick a coastal port.');
+    if(o.jsFallback===false)
+      throw new Error('Route sidecar unavailable ('+e.message+') — canal/Horn passages need it running (scripts/run.ps1).');
     console.warn('[routing] sidecar unavailable — local JS engine:',e.message);
     if(window.Telemetry)window.Telemetry.send('route-sidecar-fallback',{message:String(e.message)});
     routeEngine='js';
@@ -1123,12 +1235,15 @@ async function rerouteAndRender(){
   rerouting=true;
   if(infoPane)infoPane.classList.add('recomputing');
   const stamp=document.getElementById('liveStamp'),stampText=stamp.textContent;
-  const routes=await routeFleetSmart((text,sub)=>{ stamp.textContent=sub||text; });
+  const routes=compositeCtx
+    ?await routeComposite((t,s2)=>{ stamp.textContent=s2||t; })
+    :await routeFleetSmart((text,sub)=>{ stamp.textContent=sub||text; });
   stamp.textContent=stampText;
   lastRoutes=routes;
   const kept=markOutliers(routes);
   const envelope=computeEnvelope(kept);
   renderRoutes3D(kept,envelope); updatePanel(kept,envelope,routes.length-kept.length); buildScrubber(kept);
+  showRangeNotice(kept);
   if(infoPane)infoPane.classList.remove('recomputing');
   rerouting=false;
   if(rerouteQueued){ rerouteQueued=false; rerouteAndRender(); }
@@ -1180,6 +1295,9 @@ async function loadLiveAndRoute(){
   refreshWindGrid(); // readout grid — parallel, fail soft
   refreshVizFields(); // wind/current line layers — parallel, fail soft
   try{
+    const plan=planPassage(START,DEST);
+    if(plan){ compositeCtx=null; await loadCompositeAndRoute(plan,{loader,loaderText,loaderSub,loaderBar}); return; }
+    compositeCtx=null;
     // Retry the whole live fetch — single transient failures shouldn't kill it.
     // Quota errors are terminal for the day; total failure falls back to the
     // last-good cached run for this passage (max 26 h old) instead of dying.
@@ -1219,6 +1337,7 @@ async function loadLiveAndRoute(){
     const kept=markOutliers(routes);
     const envelope=computeEnvelope(kept);
     renderRoutes3D(kept,envelope); updatePanel(kept,envelope,routes.length-kept.length); buildScrubber(kept);
+    showRangeNotice(kept);
     document.getElementById('liveStamp').className='live';
     const maskNote=(window.LandMask&&window.LandMask.isReady())?'':' · boxes-only mask';
     document.getElementById('liveStamp').textContent=cachedRun

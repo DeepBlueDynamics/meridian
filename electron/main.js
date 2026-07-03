@@ -1,4 +1,4 @@
-import { app, BrowserWindow, protocol, net, ipcMain, shell, screen } from "electron";
+import { app, BrowserWindow, protocol, net, ipcMain, shell, screen, Menu } from "electron";
 import { startBridge, stopBridge, notifyViewChanged } from "./bridge.js";
 import http from "node:http";
 import path from "node:path";
@@ -216,7 +216,7 @@ function mcpWindowResize(a = {}) {
 // ── shared app-control handlers ────────────────────────────────────────────
 // One implementation each; both the :9123 HTTP control server and the
 // meridian-sidecar bridge (:9124 agent surface) dispatch here.
-const VIEW_FILES = { setup: "setup.html", routing: "routing.html", layers: "layers.html", harbor: "index.html", radio: "radio.html" };
+const VIEW_FILES = { setup: "setup.html", routing: "routing.html", layers: "layers.html", helm: "helm.html", harbor: "index.html", radio: "radio.html" };
 let currentView = "setup";
 function viewFromUrl(u) {
   const f = String(u || "").split("/").pop().split("?")[0];
@@ -539,6 +539,7 @@ function startTranscribeRelay() {
 }
 
 app.whenReady().then(() => {
+  Menu.setApplicationMenu(null); // no File/Edit/View chrome — this is a helm app
   registerTilesProxy();
   createWindow();
   startControlServer();

@@ -45,6 +45,7 @@ pub enum ViewName {
     Setup,
     Routing,
     Layers,
+    Helm,
     Harbor,
     Radio,
 }
@@ -55,6 +56,7 @@ impl ViewName {
             ViewName::Setup => "setup",
             ViewName::Routing => "routing",
             ViewName::Layers => "layers",
+            ViewName::Helm => "helm",
             ViewName::Harbor => "harbor",
             ViewName::Radio => "radio",
         }
@@ -257,7 +259,7 @@ impl MeridianMcp {
         }
     }
 
-    #[tool(description = "Switch the app to a view: setup | routing | layers | harbor | radio. Returns after the page finishes loading, so a follow-up app_eval is safe immediately.")]
+    #[tool(description = "Switch the app to a view: setup | routing | layers | helm | harbor | radio. Returns after the page finishes loading, so a follow-up app_eval is safe immediately.")]
     async fn app_navigate(&self, Parameters(req): Parameters<NavigateRequest>) -> Result<CallToolResult, ErrorData> {
         let msg = serde_json::json!({"type": "Navigate", "view": req.view.as_str()});
         match self.bridge_call(msg, Duration::from_secs(30)).await {
