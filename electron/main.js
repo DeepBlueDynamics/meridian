@@ -300,6 +300,31 @@ function startControlServer() {
         res.end("ok");
         return;
       }
+      // Config surface for the Setup view: key status + live .env writes.
+      // The key takes effect immediately (the relay reads process.env per
+      // request) — no restart. Never echo the key back.
+      if (url.pathname === "/config/status") {
+        res.setHeader("Content-Type", "application/json");
+        res.end(JSON.stringify({ anthropicKey: !!process.env.ANTHROPIC_API_KEY }));
+        return;
+      }
+      if (url.pathname === "/config/anthropic-key" && req.method === "POST") {
+        let body = "";
+        for await (const c of req) body += c;
+        let key = "";
+        try { key = String((JSON.parse(body) || {}).key || "").trim(); } catch (e) { /* empty */ }
+        const envPath = path.join(__dirname, "..", ".env");
+        let env = "";
+        try { env = fs.readFileSync(envPath, "utf8"); } catch (e) { /* new file */ }
+        const line = "ANTHROPIC_API_KEY=" + key;
+        if (/^ANTHROPIC_API_KEY=.*$/m.test(env)) env = env.replace(/^ANTHROPIC_API_KEY=.*$/m, line);
+        else env += (env.endsWith("\n") || env === "" ? "" : "\n") + line + "\n";
+        fs.writeFileSync(envPath, env);
+        if (key) process.env.ANTHROPIC_API_KEY = key; else delete process.env.ANTHROPIC_API_KEY;
+        res.setHeader("Content-Type", "application/json");
+        res.end(JSON.stringify({ ok: true, set: !!key }));
+        return;
+      }
       // Anthropic relay for the Helm terminal's widget builder — the key
       // stays in the MAIN process (.env ANTHROPIC_API_KEY), the renderer
       // only sees this loopback endpoint. Wire shape = the Messages API.

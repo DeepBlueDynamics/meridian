@@ -3,62 +3,53 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Meridian — Vessel Setup</title>
-<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<title>MERIDIAN — Setup</title>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Public+Sans:wght@300;400;500;600;700&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet" />
 <style>
   :root {
-    --paper:#07223d; --paper-deep:#04162b; --paper-edge:#0a2c52;
-    --ink:#e8f1f7; --ink-dim:#9ec5fe; --ink-faint:#4a7ab0;
-    --grid:#0e3463; --grid-dim:#0b2a52;
-    --amber:#f2c94c; --amber-warm:#f2994a; --hot:#eb5757; --highlight:#ffd166; --cool:#4ecdc4;
-    --serif:'DM Serif Display',serif; --sans:'DM Sans',sans-serif; --mono:'IBM Plex Mono',monospace;
+    --bg:#0a0f18; --bg-2:#131a26; --line:#1f2a3d; --line-bright:#324863;
+    --ink:#e8ecf3; --ink-dim:#9ba8bd; --ink-faint:#54627c; --ink-fade:#2a3548;
+    --envelope:#f9a826; --amber-warm:#f2994a; --hot:#e94560; --cool:#4ecdc4; --warn:#ffb938; --cur:#4fa3ff;
+    --serif:'Instrument Serif',serif; --sans:'Public Sans',sans-serif; --mono:'Fira Code',monospace;
   }
   * { box-sizing:border-box; }
-  /* Single-screen instrument page — never scrolls; the polar plot scales to fit. */
-  html,body { margin:0; padding:0; height:100vh; overflow:hidden; background:var(--paper); color:var(--ink); font-family:var(--sans); }
+  html,body { margin:0; padding:0; height:100vh; overflow:hidden; background:var(--bg); color:var(--ink); font-family:var(--sans); }
   body { display:flex; flex-direction:column; }
-  body {
-    background:
-      linear-gradient(135deg, rgba(255,255,255,0.015) 0%, transparent 100%),
-      repeating-linear-gradient(0deg,  var(--grid-dim) 0 1px, transparent 1px 24px),
-      repeating-linear-gradient(90deg, var(--grid-dim) 0 1px, transparent 1px 24px),
-      repeating-linear-gradient(0deg,  var(--grid) 0 1px, transparent 1px 120px),
-      repeating-linear-gradient(90deg, var(--grid) 0 1px, transparent 1px 120px),
-      radial-gradient(ellipse at center, var(--paper) 0%, var(--paper-deep) 90%);
-  }
 
-  /* shared view nav */
-  .viewnav { display:flex; gap:8px; padding:12px 24px 0; }
-  .viewnav .nv { font-family:var(--mono); font-size:11px; letter-spacing:0.18em; text-transform:uppercase;
-    color:var(--ink-dim); text-decoration:none; border:1px solid var(--ink-faint); padding:7px 14px; border-radius:3px; }
-  .viewnav .nv:hover { color:var(--ink); border-color:var(--ink-dim); background:rgba(158,197,254,0.06); }
-  .viewnav .nv.active { color:var(--amber); border-color:var(--amber); background:rgba(242,201,76,0.08); }
+  .tabs { display:flex; gap:2px; padding:12px 24px 0; }
+  .tab { font-family:var(--mono); font-size:10.5px; letter-spacing:0.22em; text-transform:uppercase;
+    color:var(--ink-faint); background:transparent; border:1px solid var(--line-bright); border-bottom:none;
+    padding:8px 20px 7px; border-radius:5px 5px 0 0; cursor:pointer; }
+  .tab:hover { color:var(--ink-dim); }
+  .tab.active { color:var(--envelope); border-color:var(--envelope); background:rgba(249,168,38,0.06); }
+  .tabline { height:1px; background:var(--line-bright); margin:0 24px; }
 
-  .title-block { border:1px solid var(--ink-dim); padding:16px 24px 12px; margin:14px 24px 0;
-    display:grid; grid-template-columns:2.4fr 1fr 1fr 1fr 1fr; gap:14px; position:relative; background:rgba(4,22,43,0.45); }
-  .title-block::before { content:''; position:absolute; top:4px; left:4px; right:4px; bottom:4px; border:1px solid var(--ink-faint); pointer-events:none; }
-  .title-block .main { font-family:var(--serif); font-style:italic; font-size:28px; line-height:1.05; color:var(--ink); }
-  .title-block .main .sub { display:block; font-family:var(--mono); font-style:normal; font-size:10px; letter-spacing:0.35em; color:var(--ink-dim); text-transform:uppercase; margin-top:6px; }
+  section[hidden] { display:none !important; }
+  .title-block { border:1px solid var(--line-bright); padding:14px 22px 11px; margin:14px 24px 0;
+    display:grid; grid-template-columns:2.4fr 1fr 1fr 1fr 1fr; gap:14px; position:relative; background:var(--bg-2); }
+  .title-block::before { content:''; position:absolute; top:4px; left:4px; right:4px; bottom:4px; border:1px solid var(--line); pointer-events:none; }
+  .title-block .main { font-family:var(--serif); font-style:italic; font-size:26px; line-height:1.05; color:var(--ink); }
+  .title-block .main .sub { display:block; font-family:var(--mono); font-style:normal; font-size:9px; letter-spacing:0.35em; color:var(--ink-faint); text-transform:uppercase; margin-top:6px; }
   .field { display:flex; flex-direction:column; gap:4px; }
   .field .label { font-family:var(--mono); font-size:9px; letter-spacing:0.22em; color:var(--ink-faint); text-transform:uppercase; }
   .field .value { font-family:var(--mono); font-size:13px; font-weight:500; color:var(--ink); font-variant-numeric:tabular-nums; }
 
-  main { display:grid; grid-template-columns:300px 1fr 320px; gap:22px; padding:18px 24px; align-items:start;
+  main { display:grid; grid-template-columns:300px 1fr 320px; gap:20px; padding:16px 24px; align-items:start;
     flex:1; min-height:0; overflow:hidden; }
   main > .panel, main > .plot-wrap { max-height:100%; overflow-y:auto; }
-  .panel { border:1px solid var(--ink-dim); background:rgba(4,22,43,0.55); padding:16px 16px 18px; position:relative; }
-  .panel::before { content:''; position:absolute; top:3px; left:3px; right:3px; bottom:3px; border:1px solid var(--ink-faint); pointer-events:none; }
-  .panel h3 { margin:0 0 12px 0; font-family:var(--serif); font-style:italic; font-size:18px; color:var(--amber); font-weight:400; }
+  .panel { border:1px solid var(--line-bright); background:var(--bg-2); padding:16px 16px 18px; position:relative; }
+  .panel::before { content:''; position:absolute; top:3px; left:3px; right:3px; bottom:3px; border:1px solid var(--line); pointer-events:none; }
+  .panel h3 { margin:0 0 12px 0; font-family:var(--serif); font-style:italic; font-size:18px; color:var(--envelope); font-weight:400; }
   .panel h3 .num { font-family:var(--mono); font-style:normal; font-size:10px; letter-spacing:0.25em; color:var(--ink-faint); margin-right:8px; }
 
-  #boatSearch { width:100%; padding:9px 11px; background:var(--paper-deep); border:1px solid var(--ink-faint);
+  #boatSearch { width:100%; padding:9px 11px; background:var(--bg); border:1px solid var(--line-bright);
     color:var(--ink); font-family:var(--mono); font-size:12px; outline:none; margin-bottom:8px; }
-  #boatSearch:focus { border-color:var(--amber); }
+  #boatSearch:focus { border-color:var(--envelope); }
   .boat-list { display:flex; flex-direction:column; gap:1px; max-height:340px; overflow-y:auto; margin-bottom:8px; }
-  .boat-btn { text-align:left; padding:8px 11px; background:transparent; border:1px solid var(--ink-faint);
+  .boat-btn { text-align:left; padding:8px 11px; background:transparent; border:1px solid var(--line);
     color:var(--ink-dim); cursor:pointer; font-family:var(--mono); font-size:11px; display:flex; flex-direction:column; gap:2px; }
-  .boat-btn:hover { background:rgba(158,197,254,0.06); color:var(--ink); }
-  .boat-btn.active { border-color:var(--amber); color:var(--amber); background:rgba(242,201,76,0.08); }
+  .boat-btn:hover { background:rgba(155,168,189,0.06); color:var(--ink); }
+  .boat-btn.active { border-color:var(--envelope); color:var(--envelope); background:rgba(249,168,38,0.08); }
   .boat-btn .name { font-weight:500; letter-spacing:0.03em; }
   .boat-btn .meta { font-size:9px; letter-spacing:0.12em; opacity:0.7; text-transform:uppercase; }
   .list-status { font-family:var(--mono); font-size:10px; color:var(--ink-faint); letter-spacing:0.1em; margin-bottom:10px; }
@@ -71,46 +62,74 @@
 
   .tws-control { margin-top:6px; }
   .tws-control .row { display:flex; align-items:baseline; gap:8px; margin-bottom:8px; }
-  .tws-control .row .value { font-family:var(--mono); font-size:22px; font-weight:500; color:var(--amber); font-variant-numeric:tabular-nums; line-height:1; }
+  .tws-control .row .value { font-family:var(--mono); font-size:22px; font-weight:500; color:var(--envelope); font-variant-numeric:tabular-nums; line-height:1; }
   .tws-control .row .unit { font-family:var(--mono); font-size:10px; color:var(--ink-faint); letter-spacing:0.2em; text-transform:uppercase; }
   .tws-control .row .label { font-family:var(--mono); font-size:9px; letter-spacing:0.22em; color:var(--ink-faint); text-transform:uppercase; }
   input[type="range"] { width:100%; -webkit-appearance:none; appearance:none; height:2px; background:var(--ink-faint); outline:none; margin:14px 0 8px; }
-  input[type="range"]::-webkit-slider-thumb { -webkit-appearance:none; width:14px; height:14px; border-radius:50%; background:var(--amber); cursor:pointer; border:2px solid var(--paper-deep); box-shadow:0 0 0 1px var(--amber); }
+  input[type="range"]::-webkit-slider-thumb { -webkit-appearance:none; width:14px; height:14px; border-radius:50%; background:var(--envelope); cursor:pointer; border:2px solid var(--bg); box-shadow:0 0 0 1px var(--envelope); }
   .tws-marks { display:flex; justify-content:space-between; font-family:var(--mono); font-size:9px; color:var(--ink-faint); }
 
-  .plot-wrap { border:1px solid var(--ink-dim); padding:18px; background:rgba(4,22,43,0.6); position:relative; }
-  .plot-wrap::before { content:''; position:absolute; top:5px; left:5px; right:5px; bottom:5px; border:1px solid var(--ink-faint); pointer-events:none; }
+  .plot-wrap { border:1px solid var(--line-bright); padding:18px; background:var(--bg-2); position:relative; }
+  .plot-wrap::before { content:''; position:absolute; top:5px; left:5px; right:5px; bottom:5px; border:1px solid var(--line); pointer-events:none; }
   .plot-header { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:8px; font-family:var(--mono); font-size:9px; letter-spacing:0.25em; color:var(--ink-faint); text-transform:uppercase; }
-  .plot-header .right { color:var(--amber); }
-  svg.polar { width:100%; height:auto; max-height:calc(100vh - 280px); display:block; margin:0 auto; }
-  svg.polar .grid-circle { fill:none; stroke:var(--ink-faint); stroke-width:0.5; opacity:0.5; }
-  svg.polar .grid-circle.major { stroke:var(--ink-dim); opacity:0.6; }
-  svg.polar .grid-radial { stroke:var(--ink-faint); stroke-width:0.5; opacity:0.4; }
-  svg.polar .grid-radial.major { stroke:var(--ink-dim); opacity:0.6; }
+  .plot-header .right { color:var(--envelope); }
+  svg.polar { width:100%; height:auto; max-height:calc(100vh - 300px); display:block; margin:0 auto; }
+  svg.polar .grid-circle { fill:none; stroke:var(--ink-fade); stroke-width:0.5; opacity:0.8; }
+  svg.polar .grid-circle.major { stroke:var(--ink-faint); opacity:0.8; }
+  svg.polar .grid-radial { stroke:var(--ink-fade); stroke-width:0.5; opacity:0.7; }
+  svg.polar .grid-radial.major { stroke:var(--ink-faint); opacity:0.8; }
   svg.polar .speed-label { fill:var(--ink-faint); font-family:var(--mono); font-size:9px; }
   svg.polar .angle-label { fill:var(--ink-dim); font-family:var(--mono); font-size:11px; font-weight:500; }
-  svg.polar .nogo { fill:var(--ink-faint); opacity:0.05; }
+  svg.polar .nogo { fill:var(--ink-faint); opacity:0.06; }
   svg.polar .nogo-label { fill:var(--ink-faint); font-family:var(--mono); font-size:9px; letter-spacing:0.3em; text-transform:uppercase; }
   svg.polar .curve { fill:none; stroke-width:1.1; opacity:0.35; transition:opacity 0.15s, stroke-width 0.15s; }
   svg.polar .curve.active { opacity:1; stroke-width:2.2; filter:drop-shadow(0 0 8px currentColor); }
-  svg.polar .wind-arrow { stroke:var(--amber); stroke-width:1.5; fill:none; }
-  svg.polar .wind-arrow-head { fill:var(--amber); stroke:none; }
-  svg.polar .wind-label { fill:var(--amber); font-family:var(--mono); font-size:10px; letter-spacing:0.3em; text-transform:uppercase; font-weight:500; }
-  svg.polar .boat-dot { fill:var(--ink); stroke:var(--paper-deep); stroke-width:1; }
-  svg.polar .vmg-marker { fill:var(--amber); stroke:var(--paper-deep); stroke-width:1.5; }
-  svg.polar .vmg-line { stroke:var(--amber); stroke-width:0.8; stroke-dasharray:3 3; opacity:0.5; fill:none; }
+  svg.polar .wind-arrow { stroke:var(--envelope); stroke-width:1.5; fill:none; }
+  svg.polar .wind-arrow-head { fill:var(--envelope); stroke:none; }
+  svg.polar .wind-label { fill:var(--envelope); font-family:var(--mono); font-size:10px; letter-spacing:0.3em; text-transform:uppercase; font-weight:500; }
+  svg.polar .boat-dot { fill:var(--ink); stroke:var(--bg); stroke-width:1; }
+  svg.polar .vmg-marker { fill:var(--envelope); stroke:var(--bg); stroke-width:1.5; }
+  svg.polar .vmg-line { stroke:var(--envelope); stroke-width:0.8; stroke-dasharray:3 3; opacity:0.5; fill:none; }
 
   .readout { display:grid; grid-template-columns:1fr 1fr; gap:14px 18px; margin-bottom:18px; }
-  .read { border-left:2px solid var(--ink-faint); padding-left:10px; }
-  .read.up { border-left-color:var(--amber); } .read.dn { border-left-color:var(--amber-warm); }
+  .read { border-left:2px solid var(--ink-fade); padding-left:10px; }
+  .read.up { border-left-color:var(--envelope); } .read.dn { border-left-color:var(--amber-warm); }
   .read .label { font-family:var(--mono); font-size:9px; letter-spacing:0.22em; color:var(--ink-faint); text-transform:uppercase; margin-bottom:3px; }
   .read .v { font-family:var(--mono); font-size:20px; font-weight:500; color:var(--ink); font-variant-numeric:tabular-nums; line-height:1; }
   .read .v .sub { font-size:10px; color:var(--ink-faint); margin-left:4px; }
   .read .x { font-family:var(--mono); font-size:10px; color:var(--ink-dim); margin-top:4px; }
-  .hint { border-top:1px solid var(--ink-faint); padding-top:14px; font-size:12px; line-height:1.6; color:var(--ink-dim); }
-  .hint strong { color:var(--amber); }
-  footer { text-align:center; padding:10px 24px 14px; font-family:var(--mono); font-size:10px; color:var(--ink-faint); letter-spacing:0.2em; text-transform:uppercase; flex-shrink:0; }
+  .hint { border-top:1px solid var(--line); padding-top:14px; font-size:12px; line-height:1.6; color:var(--ink-dim); }
+  .hint strong { color:var(--envelope); }
+  footer { text-align:center; padding:8px 24px 12px; font-family:var(--mono); font-size:9.5px; color:var(--ink-faint); letter-spacing:0.2em; text-transform:uppercase; flex-shrink:0; }
   .boat-btn .meta .est { color:var(--amber-warm); }
+
+  /* ── CONFIG tab — every setting in the app, mirrored in place ── */
+  #tab-config { flex:1; min-height:0; overflow-y:auto; padding:16px 24px 30px; }
+  .cfg-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(330px, 1fr)); gap:16px; max-width:1500px; margin:0 auto; }
+  .cfg { border:1px solid var(--line-bright); background:var(--bg-2); padding:16px 18px 14px; position:relative; }
+  .cfg::before { content:''; position:absolute; top:3px; left:3px; right:3px; bottom:3px; border:1px solid var(--line); pointer-events:none; }
+  .cfg h3 { margin:0 0 4px; font-family:var(--serif); font-style:italic; font-size:17px; color:var(--envelope); font-weight:400; }
+  .cfg .where { font-family:var(--mono); font-size:8.5px; letter-spacing:0.2em; color:var(--ink-faint); text-transform:uppercase; margin-bottom:12px; }
+  .row { display:flex; align-items:center; gap:10px; padding:7px 0; border-bottom:1px solid var(--line); position:relative; z-index:1; }
+  .row:last-child { border-bottom:none; }
+  .row .k { font-family:var(--mono); font-size:11px; color:var(--ink-dim); letter-spacing:0.04em; flex:1; }
+  .row .k .sub { display:block; font-size:9px; color:var(--ink-faint); margin-top:1px; }
+  .row input[type="number"], .row input[type="text"], .row input[type="password"], .row select {
+    background:var(--bg); border:1px solid var(--line-bright); color:var(--ink); font-family:var(--mono); font-size:11.5px;
+    padding:5px 8px; border-radius:3px; outline:none; width:120px; }
+  .row input[type="text"], .row input[type="password"] { width:190px; }
+  .row select { width:150px; }
+  .row input:focus, .row select:focus { border-color:var(--cool); }
+  .sw { width:34px; height:18px; border-radius:10px; background:var(--ink-fade); position:relative; cursor:pointer; flex-shrink:0; transition:background .15s; }
+  .sw i { position:absolute; top:2px; left:2px; width:14px; height:14px; border-radius:50%; background:var(--ink-dim); transition:left .15s, background .15s; }
+  .sw.on { background:rgba(78,205,196,0.35); }
+  .sw.on i { left:18px; background:var(--cool); }
+  .cfg .note { font-family:var(--mono); font-size:9px; color:var(--ink-faint); margin-top:10px; line-height:1.6; letter-spacing:0.03em; }
+  .cfg .stat { font-family:var(--mono); font-size:10px; letter-spacing:0.08em; }
+  .cfg .stat.ok { color:var(--cool); } .cfg .stat.no { color:var(--warn); }
+  .savebtn { background:transparent; border:1px solid var(--line-bright); color:var(--ink-dim); font-family:var(--mono);
+    font-size:10.5px; padding:5px 12px; border-radius:3px; cursor:pointer; letter-spacing:0.08em; }
+  .savebtn:hover { color:var(--ink); border-color:var(--ink-dim); }
   @media (max-width:1100px) { main { grid-template-columns:1fr; } }
 </style>
 </head>
@@ -118,6 +137,13 @@
 
   <header data-meridian-header="Setup"></header>
 
+  <div class="tabs">
+    <button class="tab active" id="tabBtnVessel">Vessel · Polar</button>
+    <button class="tab" id="tabBtnConfig">Config</button>
+  </div>
+  <div class="tabline"></div>
+
+<section id="tab-vessel" style="display:flex;flex-direction:column;flex:1;min-height:0">
 <div class="title-block">
   <div class="main">Vessel Setup<span class="sub">Meridian · ORC Polar Profile</span></div>
   <div class="field"><span class="label">Maker</span><span class="value" id="tb-maker">—</span></div>
@@ -137,7 +163,7 @@
 
     <h3 style="margin-top:20px"><span class="num">A.02</span>True Wind Speed</h3>
     <div class="tws-control">
-      <div class="row"><span class="value" id="twsValue">12</span><span class="unit">kt</span><span class="label" style="margin-left:auto">TWS</span></div>
+      <div class="row" style="border:none"><span class="value" id="twsValue">12</span><span class="unit">kt</span><span class="label" style="margin-left:auto">TWS</span></div>
       <input id="twsSlider" type="range" min="0" max="8" step="1" value="4" />
       <div class="tws-marks" id="twsMarks"></div>
     </div>
@@ -164,26 +190,172 @@
     <h3 style="margin-top:6px"><span class="num">A.05</span>Notes</h3>
     <div class="hint">
       <p>Polars are <strong>real ORC certificate VPP allowances</strong> from <code>orc-data</code> — boat speed (BSP) vs true wind angle (TWA) at each true wind speed (TWS).</p>
-      <p>Sail areas (main / headsail / spinnaker) come from the same certificate. Pick a vessel and press <strong>Use this vessel</strong>; the router then runs that exact polar across the live wind field.</p>
+      <p>Sail areas come from the same certificate. Pick a vessel and press <strong>Use this vessel</strong>; the router then runs that exact polar across the live wind field.</p>
     </div>
   </aside>
 </main>
 
 <footer>ORC certificate VPP data · DeepBlueDynamics/orc-data · pick a vessel, then go to Routing</footer>
+</section>
+
+<section id="tab-config" hidden>
+  <div class="cfg-grid">
+
+    <div class="cfg">
+      <h3>Routing · Engine</h3>
+      <div class="where">lives on the routing view · mirrored here</div>
+      <div class="row"><span class="k">Engine (motoring)<span class="sub">route with motor when sailing VMG stalls</span></span><div class="sw" data-json="meridian.motoring" data-field="enabled"><i></i></div></div>
+      <div class="row"><span class="k">Motor speed</span><input type="number" min="2" max="12" step="0.5" data-json="meridian.motoring" data-field="motorKt" /> <span class="k" style="flex:none">kt</span></div>
+      <div class="row"><span class="k">Min sailing VMG</span><input type="number" min="1" max="8" step="0.5" data-json="meridian.motoring" data-field="thresholdKt" /> <span class="k" style="flex:none">kt</span></div>
+      <div class="row"><span class="k">Max routing range<span class="sub">the MAX RANGE notice points here</span></span><input type="number" min="120" max="2160" step="24" data-key="meridian.routing.maxHours" data-type="num" data-default="720" /> <span class="k" style="flex:none">h</span></div>
+    </div>
+
+    <div class="cfg">
+      <h3>Routing · Display</h3>
+      <div class="where">scrubbar toggles on the routing view</div>
+      <div class="row"><span class="k">Viz mode</span>
+        <select data-key="meridian.routing.vizmode" data-default="flow"><option value="flow">FLOW (particles)</option><option value="lines">LINES</option></select></div>
+      <div class="row"><span class="k">Wind field</span><div class="sw" data-key="meridian.routing.windViz" data-type="bool10" data-default="1"><i></i></div></div>
+      <div class="row"><span class="k">Current field</span><div class="sw" data-key="meridian.routing.curViz" data-type="bool10" data-default="1"><i></i></div></div>
+    </div>
+
+    <div class="cfg">
+      <h3>Clock</h3>
+      <div class="where">top bar · every view</div>
+      <div class="row"><span class="k">Timezone<span class="sub">IANA name; UTC = Zulu</span></span><input type="text" data-key="meridian.clock.tz" data-default="UTC" placeholder="UTC" /></div>
+      <div class="row"><span class="k">Date format</span>
+        <select data-key="meridian.clock.datefmt" data-default="intl"><option value="intl">03/01/2030 (intl)</option><option value="long">March 1, 2030</option><option value="us">03/01/30 (US)</option></select></div>
+    </div>
+
+    <div class="cfg">
+      <h3>Helm · AI</h3>
+      <div class="where">widget builder LLM · key lives in .env (main process)</div>
+      <div class="row"><span class="k">Anthropic API key</span><span class="stat" id="aiStat">checking…</span></div>
+      <div class="row"><input type="password" id="aiKey" placeholder="sk-ant-…" style="flex:1;width:auto" /><button class="savebtn" id="aiSave">SET</button></div>
+      <div class="note">Stored in .env, read only by the main process — the renderer sees a loopback relay. Takes effect immediately, no restart. Swaps to the service's infer.complete when its executor lands.</div>
+    </div>
+
+    <div class="cfg">
+      <h3>Signal K</h3>
+      <div class="where">live boat data · helm + layers connect boxes</div>
+      <div class="row"><span class="k">Default server<span class="sub">host:port — the skiff sim feeds this</span></span><input type="text" data-key="meridian.signalk.host" data-default="" placeholder="localhost:3000" /></div>
+    </div>
+
+    <div class="cfg">
+      <h3>Radio</h3>
+      <div class="where">radio view · transcription panel</div>
+      <div class="row"><span class="k">Persistent logbook</span><div class="sw" data-key="meridian.radio.persistent_log" data-type="bool10" data-default="1"><i></i></div></div>
+      <div class="row"><span class="k">Remote transcription<span class="sub">relay :8765 → service /transcribe (needs sign-in)</span></span><div class="sw" data-json="meridian.transcribe" data-field="remote"><i></i></div></div>
+      <div class="row"><span class="k">Save logs remotely<span class="sub">stub — /userdata pending</span></span><div class="sw" data-json="meridian.transcribe" data-field="saveLogs"><i></i></div></div>
+    </div>
+
+    <div class="cfg">
+      <h3>Layers</h3>
+      <div class="where">layers view panel toggles</div>
+      <div class="row"><span class="k">ENC chart underlay</span><div class="sw" data-key="meridian.layers.chart" data-type="booltf" data-default="true"><i></i></div></div>
+      <div class="row"><span class="k">Gust shading</span><div class="sw" data-key="meridian.layers.gust" data-type="booltf" data-default="true"><i></i></div></div>
+      <div class="row"><span class="k">Viz mode</span>
+        <select data-key="meridian.layers.vizmode" data-default="flow" data-jsonval="1"><option value="flow">FLOW (particles)</option><option value="lines">LINES</option></select></div>
+    </div>
+
+  </div>
+  <div class="cfg-grid" style="margin-top:14px">
+    <div class="cfg" style="grid-column:1/-1">
+      <div class="note" style="margin-top:0">Settings live where they're used — this page reads and writes the same stores, nothing moves. Changes apply the next time the owning view loads (the clock updates everywhere immediately).</div>
+    </div>
+  </div>
+</section>
 
 <script src="lib/telemetry.js"></script>
 <script src="lib/topbar.js"></script>
 <script src="lib/vessel.js"></script>
 <script src="lib/orcdata.js"></script>
 <script>
-// ── state ──
+// ── tabs ──
+const tabV=document.getElementById('tabBtnVessel'), tabC=document.getElementById('tabBtnConfig');
+function setTab(which){
+  tabV.classList.toggle('active',which==='vessel'); tabC.classList.toggle('active',which==='config');
+  document.getElementById('tab-vessel').hidden=which!=='vessel';
+  document.getElementById('tab-vessel').style.display=which==='vessel'?'flex':'none';
+  document.getElementById('tab-config').hidden=which!=='config';
+  try{ localStorage.setItem('meridian.setup.tab',which); }catch(e){}
+}
+tabV.addEventListener('click',()=>setTab('vessel'));
+tabC.addEventListener('click',()=>setTab('config'));
+setTab(localStorage.getItem('meridian.setup.tab')||'vessel');
+
+// ── config binder: same localStorage keys the owning views use ──
+// data-key + data-type: num | str | bool10 ('1'/'0') | booltf ('true'/'false')
+// data-json + data-field: field inside a JSON-object key (e.g. meridian.motoring)
+(function(){
+  const get=(k,d)=>{ try{ const v=localStorage.getItem(k); return v==null?d:v; }catch(e){ return d; } };
+  const getJson=(k)=>{ try{ return JSON.parse(localStorage.getItem(k))||{}; }catch(e){ return {}; } };
+  const setJson=(k,o)=>{ try{ localStorage.setItem(k,JSON.stringify(o)); }catch(e){} };
+  // JSON defaults matching the owning views
+  const JSON_DEFAULTS={ 'meridian.motoring':{enabled:true,motorKt:6.5,thresholdKt:4},
+                        'meridian.transcribe':{remote:false,saveLogs:false} };
+  const jget=(k)=>Object.assign({},JSON_DEFAULTS[k]||{},getJson(k));
+
+  for(const el of document.querySelectorAll('[data-key],[data-json]')){
+    const isSw=el.classList.contains('sw');
+    if(el.dataset.json){
+      const key=el.dataset.json, field=el.dataset.field;
+      if(isSw){
+        const sync=()=>el.classList.toggle('on',!!jget(key)[field]);
+        el.addEventListener('click',()=>{ const o=jget(key); o[field]=!o[field]; setJson(key,o); sync(); });
+        sync();
+      }else{
+        el.value=jget(key)[field];
+        el.addEventListener('change',()=>{ const o=jget(key); o[field]=parseFloat(el.value)||o[field]; setJson(key,o); });
+      }
+      continue;
+    }
+    const key=el.dataset.key, type=el.dataset.type||'str', dflt=el.dataset.default??'';
+    if(isSw){
+      const truthy=type==='booltf'?'true':'1', falsy=type==='booltf'?'false':'0';
+      const cur=get(key,dflt);
+      const on=type==='booltf'?cur!=='false':cur!=='0';
+      el.classList.toggle('on',on);
+      el.addEventListener('click',()=>{ const now=!el.classList.contains('on');
+        try{ localStorage.setItem(key,now?truthy:falsy); }catch(e){}
+        el.classList.toggle('on',now); });
+    }else{
+      let cur=get(key,dflt);
+      // layers store JSON-encodes values ("\"flow\"", "true")
+      if(el.dataset.jsonval){ try{ cur=JSON.parse(cur); }catch(e){} }
+      el.value=cur;
+      el.addEventListener('change',()=>{ let v=el.value;
+        if(el.dataset.jsonval)v=JSON.stringify(v);
+        try{ localStorage.setItem(key,v); }catch(e){} });
+    }
+  }
+})();
+
+// ── Helm AI key (main-process .env via the control server) ──
+(async function(){
+  const stat=document.getElementById('aiStat');
+  const refresh=async()=>{
+    try{ const j=await (await fetch('http://127.0.0.1:9123/config/status')).json();
+      stat.textContent=j.anthropicKey?'● SET':'○ NOT SET — helm prompt will not respond';
+      stat.className='stat '+(j.anthropicKey?'ok':'no');
+    }catch(e){ stat.textContent='control server unreachable'; stat.className='stat no'; }
+  };
+  document.getElementById('aiSave').addEventListener('click',async()=>{
+    const key=document.getElementById('aiKey').value.trim();
+    try{ await fetch('http://127.0.0.1:9123/config/anthropic-key',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({key})});
+      document.getElementById('aiKey').value=''; refresh();
+    }catch(e){ stat.textContent='save failed: '+e.message; stat.className='stat no'; }
+  });
+  refresh();
+})();
+
+// ── vessel/polar tab (unchanged logic) ──
 let fleet = [];
-let active = null;     // active boat object {name,twa,tws,bsp,...}
-let twsIdx = 0;        // index into active.tws
+let active = null;
+let twsIdx = 0;
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const SCALE = 28, MAX_KT = 11;
 
-// ── math ──
 function bspAt(boat, twa, tws) {
   twa = Math.abs(twa); if (twa > 180) twa = 360 - twa;
   const A = boat.twa, T = boat.tws;
@@ -206,7 +378,6 @@ function polarToXY(twa,bsp){ const r=(twa*Math.PI)/180; return [bsp*SCALE*Math.s
 function twsColor(i,n){ const s=['#6c8eb8','#7fa9d4','#9ec5fe','#a8d5ff','#f2c94c','#f2994a','#eb7c4b','#eb5757','#9d2935']; return s[Math.min(s.length-1, Math.round(i/Math.max(1,n-1)*(s.length-1)))]; }
 function el(tag,attrs={},children=[]){ const e=document.createElementNS(SVG_NS,tag); for(const k in attrs)e.setAttribute(k,attrs[k]); for(const c of (Array.isArray(children)?children:[children])){ if(c==null)continue; e.appendChild(typeof c==='string'?document.createTextNode(c):c);} return e; }
 
-// ── render polar ──
 function renderPolar() {
   const svg=document.getElementById('polarSvg'); svg.innerHTML=''; if(!active) return;
   const boat=active, activeTws=boat.tws[twsIdx];
@@ -278,7 +449,6 @@ document.getElementById('useBtn').addEventListener('click',()=>{ if(!active)retu
   try {
     fleet = await window.OrcData.load();
     document.getElementById('listStatus').textContent=`${fleet.length} boats`;
-    // preselect the stored vessel if it's in the fleet, else the first boat
     const cur = window.Vessel.get();
     active = fleet.find(b=>b.id===cur.id) || fleet[0];
     setupTwsSlider(); renderTitle(); renderPolar(); renderList();
@@ -287,6 +457,10 @@ document.getElementById('useBtn').addEventListener('click',()=>{ if(!active)retu
     console.error('[setup] orc-data load failed', e);
   }
 })();
+
+// control hooks for /eval
+window.m={ setTab, state:()=>({ tab:localStorage.getItem('meridian.setup.tab')||'vessel',
+  vessel:(window.Vessel.get()||{}).label||null }) };
 </script>
 </body>
 </html>
