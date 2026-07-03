@@ -178,11 +178,12 @@ pub fn route_member_iso(
         if cancel.load(Ordering::Relaxed) {
             return Err(EngineError("cancelled".into()));
         }
+        // Beyond the forecast horizon, sail on PERSISTENCE (the last forecast
+        // hour) instead of stranding the fleet mid-ocean — long passages
+        // (Hawaii→Cabo ≈ 16 days) outrun the 15-day ECMWF window. (Mirrors
+        // router.js — change together.)
         let hour_f = (t + req.dep_offset_hours).floor();
-        if hour_f >= flen as f64 {
-            break;
-        }
-        let hour_idx = hour_f as usize;
+        let hour_idx = if hour_f >= flen as f64 { flen - 1 } else { hour_f as usize };
         let mut buckets: Vec<(i32, BucketEntry)> = Vec::with_capacity(101);
 
         // consider(): returns Some(idx) when the candidate passed

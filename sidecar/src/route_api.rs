@@ -78,6 +78,18 @@ impl Job {
 pub struct RouteJobs {
     inner: Arc<Mutex<HashMap<String, Arc<Job>>>>,
     seq: Arc<AtomicUsize>,
+    // request-hash → finished result. Toggling motoring/currents flips one
+    // request field; keeping recent variants makes the flip instant.
+    cache: Arc<Mutex<Vec<(u64, serde_json::Value)>>>,
+}
+
+pub fn fnv1a(bytes: &[u8]) -> u64 {
+    let mut h = 0xcbf29ce484222325u64;
+    for &b in bytes {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    h
 }
 
 /// The Natural Earth mask loads once and lives for the process.
@@ -90,15 +102,39 @@ async fn mask() -> Result<Arc<LandMask>, String> {
 }
 
 impl RouteJobs {
+    pub fn cached(&self, key: u64) -> Option<serde_json::Value> {
+        self.cache.lock().unwrap().iter().rev().find(|(k, _)| *k == key).map(|(_, v)| v.clone())
+    }
+    fn store_cache(&self, key: u64, v: serde_json::Value) {
+        let mut c = self.cache.lock().unwrap();
+        c.retain(|(k, _)| *k != key);
+        c.push((key, v));
+        while c.len() > 8 {
+            c.remove(0);
+        }
+    }
+    fn new_id(&self) -> String {
+        format!("rt_{}", self.seq.fetch_add(1, Ordering::Relaxed) + 1)
+    }
+    /// Register a job that is already Done (cache hit) — the client's normal
+    /// poll loop resolves on its first status check.
+    pub fn start_done(&self, result: serde_json::Value) -> String {
+        let id = self.new_id();
+        let job = Arc::new(Job::new());
+        *job.result.lock().unwrap() = Some(result);
+        job.set_state(JobState::Done);
+        self.inner.lock().unwrap().insert(id.clone(), job);
+        id
+    }
     /// Start a job unless one is live. Err = the active job's id.
-    pub fn try_start(&self, req: RouteRequest) -> Result<String, String> {
+    pub fn try_start(&self, req: RouteRequest, cache_key: Option<u64>) -> Result<String, String> {
         {
             let map = self.inner.lock().unwrap();
             if let Some((id, _)) = map.iter().find(|(_, j)| j.is_live()) {
                 return Err(id.clone());
             }
         }
-        let id = format!("rt_{}", self.seq.fetch_add(1, Ordering::Relaxed) + 1);
+        let id = self.new_id();
         let job = Arc::new(Job::new());
         {
             let mut map = self.inner.lock().unwrap();
@@ -106,7 +142,7 @@ impl RouteJobs {
             map.insert(id.clone(), job.clone());
         }
         job.member_total.store(req.members.len(), Ordering::Relaxed);
-        tokio::spawn(run_job(job, req));
+        tokio::spawn(run_job(job, req, self.clone(), cache_key));
         Ok(id)
     }
 
@@ -138,7 +174,11 @@ impl RouteJobs {
     }
 }
 
-pub async fn post_compute(State(jobs): State<RouteJobs>, body: axum::body::Bytes) -> impl IntoResponse {
+pub async fn post_compute(
+    State(jobs): State<RouteJobs>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    body: axum::body::Bytes,
+) -> impl IntoResponse {
     let req: RouteRequest = match serde_json::from_slice(&body) {
         Ok(r) => r,
         Err(e) => {
@@ -146,14 +186,22 @@ pub async fn post_compute(State(jobs): State<RouteJobs>, body: axum::body::Bytes
                 .into_response()
         }
     };
-    match jobs.try_start(req) {
+    let key = fnv1a(&body);
+    let force = q.get("force").map(|v| v == "1" || v == "true").unwrap_or(false);
+    if !force {
+        if let Some(hit) = jobs.cached(key) {
+            let id = jobs.start_done(hit);
+            return Json(serde_json::json!({"job_id": id, "cached": true})).into_response();
+        }
+    }
+    match jobs.try_start(req, Some(key)) {
         Ok(id) => Json(serde_json::json!({"job_id": id})).into_response(),
         Err(active) => (StatusCode::CONFLICT, Json(serde_json::json!({"error": "job_active", "job_id": active})))
             .into_response(),
     }
 }
 
-async fn run_job(job: Arc<Job>, req: RouteRequest) {
+async fn run_job(job: Arc<Job>, req: RouteRequest, jobs: RouteJobs, cache_key: Option<u64>) {
     let t0 = Instant::now();
     job.set_state(JobState::LoadingLandmask);
     let mask = match mask().await {
@@ -171,6 +219,9 @@ async fn run_job(job: Arc<Job>, req: RouteRequest) {
     match out {
         Ok(Ok(mut v)) => {
             v["timings_ms"]["landmask"] = serde_json::json!(t_mask);
+            if let Some(key) = cache_key {
+                jobs.store_cache(key, v.clone());
+            }
             *job.result.lock().unwrap() = Some(v);
             job.set_state(JobState::Done);
         }

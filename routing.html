@@ -86,7 +86,7 @@
   .scrubbar input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:13px; height:13px; border-radius:50%; background:var(--mean); cursor:pointer; border:2px solid var(--bg); }
   .scrubbar .t { font-family:var(--mono); font-size:10.5px; color:var(--ink-dim); white-space:nowrap; }
   .scrubbar .t b { color:var(--envelope); }
-  .legend { position:absolute; right:14px; top:58px; z-index:5; display:flex; gap:14px; align-items:center;
+  .legend { position:absolute; left:14px; bottom:64px; z-index:5; display:flex; gap:14px; align-items:center;
     font-family:var(--mono); font-size:9.5px; letter-spacing:0.08em; color:var(--ink-dim);
     background:rgba(10,15,24,0.65); border:1px solid var(--line); padding:5px 10px; pointer-events:none; }
   .legend .li { display:inline-flex; align-items:center; gap:5px; }
@@ -107,9 +107,10 @@
   .pane .dock .rbox .rplace { font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:260px; }
   .pane .dock .dockwx { font-family:var(--mono); font-size:10px; color:var(--cool); letter-spacing:0.06em; white-space:nowrap; }
   .pane .dock .dockwx b { color:var(--cool); }
-  .pane .dock .mini { margin-left:auto; background:transparent; border:1px solid var(--line-bright); color:var(--ink-dim);
+  .pane .dock .mini { background:transparent; border:1px solid var(--line-bright); color:var(--ink-dim);
     font-family:var(--mono); font-size:11px; padding:4px 9px; border-radius:3px; cursor:pointer; flex-shrink:0; }
   .pane .dock .mini:hover { color:var(--ink); border-color:var(--ink-dim); }
+  .pane .dock .dockwx { margin-left:auto; }
   .pane.min > .cz, .pane.min > .tag { display:none; }
   /* passage stats moved from the top bar onto the main map */
   .mapstats { position:absolute; right:14px; top:10px; z-index:6; display:flex; gap:8px; }
@@ -219,7 +220,8 @@
           <button class="sbtn" id="playBtn" title="Play / pause passage">▶</button>
           <input id="scrub" type="range" min="0" max="120" step="1" value="0" />
           <div class="t" id="scrubLabel">T+0h</div>
-          <button class="sbtn active" id="windBtn" title="Toggle live wind field">WIND</button>
+          <button class="sbtn active" id="windBtn" title="Toggle wind field (white, matches Layers)">WIND</button>
+          <button class="sbtn active" id="curBtn" title="Toggle current field (blue, matches Layers)">CUR</button>
           <button class="sbtn" id="fleetBtn" title="Show all ensemble member routes">FLEET</button>
         </div>
         <div class="mapstats">
@@ -246,16 +248,16 @@
           <div id="depView" class="cz"></div>
           <div class="dock">
             <div class="rbox dep click" id="depBox" title="Click to change departure port"><span class="rlabel">DEP ▾</span><span class="rplace" id="depPlace">Newport, RI</span><span class="rcoord" id="depCoord">41.49°N · 71.32°W</span></div>
-            <div class="dockwx" id="depWind"><b>WIND</b> —</div>
             <button class="mini" id="depMini" title="Minimize the departure view">▾</button>
+            <div class="dockwx" id="depWind"><b>WIND</b> —</div>
           </div>
         </div>
         <div class="pane" id="arrPane">
           <div id="arrView" class="cz"></div>
           <div class="dock">
             <div class="rbox arr click" id="arrBox" title="Click to change arrival port"><span class="rlabel">ARR ▾</span><span class="rplace" id="arrPlace">St. George's, Bermuda</span><span class="rcoord" id="arrCoord">32.38°N · 64.68°W</span></div>
-            <div class="dockwx" id="arrWind"><b>WIND</b> —</div>
             <button class="mini" id="arrMini" title="Minimize the arrival view">▾</button>
+            <div class="dockwx" id="arrWind"><b>WIND</b> —</div>
           </div>
         </div>
       </div>
@@ -303,6 +305,7 @@
           <label>Motor <input id="motorKt" type="number" min="2" max="12" step="0.5" /> kt</label>
           <label>Min VMG <input id="motorThresh" type="number" min="1" max="8" step="0.5" /> kt</label>
         </div>
+        <button class="btn" id="recalcBtn" style="margin-top:8px" title="Bypass the route cache and recompute">⟳ Recalculate route</button>
       </div>
 
       <div>
@@ -337,6 +340,8 @@
 <script src="lib/api-service.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/cesium/1.124.0/Cesium.js"></script>
 <script src="lib/fdmath.js"></script>
+<script src="lib/field.js"></script>
+<script src="lib/fieldlayer.js"></script>
 <script src="lib/vessel.js"></script>
 <script src="lib/router.js"></script>
 <script src="lib/landmask.js"></script>
@@ -396,6 +401,11 @@ async function loadTiles(v, label) {
 const mainViewer = makeViewer("mainView", false);
 const depViewer  = makeViewer("depView", false);
 const arrViewer  = makeViewer("arrView", false);
+// Finer wheel zoom — Cesium's default zoom factor (5) jumps a whole region
+// per notch; ~1.8 gives usable fine control at harbor scales.
+for(const v of [mainViewer,depViewer,arrViewer]) v.scene.screenSpaceCameraController._zoomFactor=1.8;
+// re-sample the wind/current lines when the camera settles
+mainViewer.camera.moveEnd.addEventListener(()=>{ try{ renderFieldViz(); }catch(e){} });
 
 // ════════════════════ route endpoints (editable, persisted) ════════════════════
 const DEFAULT_ROUTE = {
@@ -418,7 +428,9 @@ function computeSamples(){ const n=6,out=[];
 let WIND_SAMPLES=computeSamples();
 // 360 h = the full 15-day ECMWF window — a 2,000 nm passage (Hawaii→Marquesas)
 // needs ~300 h; the old 240 h cap guaranteed zero arrivals on long legs.
-const MAX_HOURS=360, ARRIVAL_TOL_NM=5;
+// 720 h: the engine sails on persistence beyond the 15-day forecast, so
+// ~4,000 nm passages can actually finish instead of parking at the horizon.
+const MAX_HOURS=720, ARRIVAL_TOL_NM=5;
 
 // Motoring settings (PredictWind-style threshold model), persisted.
 function loadMotoring(){
@@ -735,7 +747,7 @@ function updateScrub(){
   updateWindReadouts(medPos);
   const when=forecastIssueDate?hoursToETA(forecastIssueDate,scrubH+depOffsetHours):'—';
   document.getElementById('scrubLabel').innerHTML=`<b>T+${Math.round(scrubH)}h</b> · ${when}${medInfo}`;
-  updateWindArrows();
+  renderFieldViz();
   updateEtaNowLine();
 }
 
@@ -757,7 +769,7 @@ function setPlaying(on){
 }
 
 // ════════════════════ wind-field arrow layer ════════════════════
-let windGrid=null,windPLC=null,windShown=true,lastWindIdx=-1;
+let windGrid=null; // readout grid (header/dock wind numbers) — viz lives in renderFieldViz
 function gridHourIdx(){
   if(!windGrid||!forecastIssueDate)return 0;
   const offH=(windGrid[0].time0-forecastIssueDate)/3600000;
@@ -781,38 +793,83 @@ function updateWindReadouts(boatPos){
   document.getElementById('depWind').innerHTML=`<b>WIND</b> ${fmtWind(nearestGridWind(START.lat,START.lon))}`;
   document.getElementById('arrWind').innerHTML=`<b>WIND</b> ${fmtWind(nearestGridWind(DEST.lat,DEST.lon))}`;
 }
-function windColor(tws){
-  if(tws<8)return colorA('#4a6f9e',0.85); if(tws<14)return colorA('#6b9dd9',0.9);
-  if(tws<20)return colorA('#4ecdc4',0.9); if(tws<28)return colorA('#f9a826',0.95);
-  return colorA('#e94560',1.0);
+// ── wind + current field layers (FieldLayer conventions, matching the
+// Layers view — spec docs/04 §4): white wind lines / blue current lines from
+// shared anchors, no arrowheads, sqrt current scale. Rendering is limited to
+// the route corridor (gridAxes extent). Fields come from lib/field.js
+// (deterministic wind + SMOC currents, one batched call each); the old
+// PolylineArrow layer is gone. windGrid stays for the header/dock READOUTS.
+let vizWindField=null,vizCurField=null,vizLines=null,vizPoints=null,vizLastKey='';
+let vizWindShown=localStorage.getItem('meridian.routing.windViz')!=='0';
+let vizCurShown=localStorage.getItem('meridian.routing.curViz')!=='0';
+async function refreshVizFields(){
+  const W=window.WxField; if(!W)return;
+  try{
+    const {glats,glons}=gridAxes();
+    const grid=W.makeGrid(glats[0],glats[glats.length-1],glons[0],glons[glons.length-1],8,10);
+    const [wf,cf]=await Promise.all([
+      W.fetchWind(grid,{mode:'deterministic'}).catch(e=>{ console.warn('[viz] wind field:',e.message); return null; }),
+      W.fetchCurrent(grid).catch(e=>{ console.warn('[viz] current field:',e.message); return null; }),
+    ]);
+    vizWindField=wf; vizCurField=cf; vizLastKey='';
+    renderFieldViz();
+  }catch(e){ console.warn('[viz] field refresh failed:',e.message); }
 }
-function buildWindLayer(grid){
-  windGrid=grid;
-  windPLC=mainViewer.scene.primitives.add(new Cesium.PolylineCollection());
-  for(const g of grid){
-    g.pl=windPLC.add({ positions:[Cesium.Cartesian3.fromDegrees(g.lon,g.lat,200),Cesium.Cartesian3.fromDegrees(g.lon,g.lat+0.1,200)],
-      width:7, material:Cesium.Material.fromType('PolylineArrow',{color:colorA('#6b9dd9',0.9)}) });
-  }
-  windPLC.show=windShown;
-  lastWindIdx=-1;
-  updateWindArrows(true);
+function cesiumZoomEquiv(){
+  const cam=mainViewer.camera, h=cam.positionCartographic.height;
+  const fovy=(cam.frustum&&cam.frustum.fovy)||1.047, ch=mainViewer.scene.canvas.clientHeight||800;
+  const mpp=2*h*Math.tan(fovy/2)/ch;
+  const lat=Cesium.Math.toDegrees(cam.positionCartographic.latitude);
+  return Math.log2(156543.03392*Math.cos(lat*Math.PI/180)/Math.max(1e-6,mpp));
 }
-function updateWindArrows(force){
-  if(!windGrid||!windPLC||!forecastIssueDate)return;
-  const offH=(windGrid[0].time0-forecastIssueDate)/3600000;
-  const idx=Math.max(0,Math.min(windGrid[0].speeds.length-1,Math.floor(scrubH+depOffsetHours-offH)));
-  if(idx===lastWindIdx&&!force)return;
-  lastWindIdx=idx;
-  for(const g of windGrid){
-    const tws=g.speeds[idx],dir=g.dirs[idx];
-    if(tws==null||dir==null){ g.pl.show=false; continue; }
-    g.pl.show=windShown;
-    const dirTo=(dir+180)%360, len=Math.min(42,7+tws*0.95);
-    const end=sphereWalk({lat:g.lat,lon:g.lon},dirTo,len);
-    g.pl.positions=[Cesium.Cartesian3.fromDegrees(g.lon,g.lat,200),Cesium.Cartesian3.fromDegrees(end.lon,end.lat,200)];
-    g.pl.material.uniforms.color=windColor(tws);
-    g.pl.width=6+Math.min(5,tws/6);
+function vizSamples(){
+  const FL=window.FieldLayer, c=mainViewer.scene.canvas, ell=mainViewer.scene.globe.ellipsoid;
+  const {glats,glons}=gridAxes();
+  const la0=glats[0],la1=glats[glats.length-1],lo0=glons[0],lo1=glons[glons.length-1];
+  const scratch=new Cesium.Cartesian2();
+  const all=FL.screenGridSamples({ width:c.clientWidth, height:c.clientHeight, spacingPx:52,
+    unproject:(px)=>{ scratch.x=px[0]; scratch.y=px[1];
+      const cart=mainViewer.camera.pickEllipsoid(scratch,ell); if(!cart)return null;
+      const cg=Cesium.Cartographic.fromCartesian(cart);
+      return [Cesium.Math.toDegrees(cg.longitude),Cesium.Math.toDegrees(cg.latitude)]; } });
+  // bounded to the route corridor — no point painting wind over the far globe
+  return all.filter(s=>s.lat>=la0&&s.lat<=la1&&s.lon>=lo0&&s.lon<=lo1);
+}
+function fieldT(field){
+  if(!field||!forecastIssueDate)return 0;
+  const raw=field.times[0], t0=new Date(raw.endsWith&&raw.endsWith('Z')?raw:raw+'Z').getTime();
+  const cur=forecastIssueDate.getTime()+(scrubH+depOffsetHours)*3600e3;
+  return Math.max(0,Math.min(field.times.length-1,(cur-t0)/3600e3));
+}
+function renderFieldViz(force){
+  const FL=window.FieldLayer, W=window.WxField; if(!FL||!W)return;
+  if(!vizLines){
+    vizLines=mainViewer.scene.primitives.add(new Cesium.PolylineCollection());
+    vizPoints=mainViewer.scene.primitives.add(new Cesium.PointPrimitiveCollection());
   }
+  // re-render only when the hour bucket, camera, or toggles changed
+  const key=`${Math.floor(fieldT(vizWindField))}:${Math.floor(fieldT(vizCurField))}:${vizWindShown}:${vizCurShown}:${Math.round(cesiumZoomEquiv()*10)}:${mainViewer.camera.positionCartographic.longitude.toFixed(3)}:${mainViewer.camera.positionCartographic.latitude.toFixed(3)}`;
+  if(!force&&key===vizLastKey)return;
+  vizLastKey=key;
+  vizLines.removeAll(); vizPoints.removeAll();
+  if(!vizWindField&&!vizCurField)return;
+  const zoom=cesiumZoomEquiv(), samples=vizSamples();
+  if(!samples.length)return;
+  const LM=window.LandMask;
+  const waterSamples=(LM&&LM.isReady&&LM.isReady())?samples.filter(s=>!LM.pointOnLand(s.lat,s.lon)):samples;
+  const H=80; // metres — clear of the sea-level tiles
+  const addSet=(field,pts,rgb,alpha,width)=>{
+    if(!field)return;
+    const data=FL.lineData(field,pts,fieldT(field),zoom,W);
+    const col=Cesium.Color.fromBytes(rgb[0],rgb[1],rgb[2],alpha);
+    for(const d of data){
+      vizLines.add({ positions:Cesium.Cartesian3.fromDegreesArrayHeights([d.source[0],d.source[1],H,d.target[0],d.target[1],H]),
+        width, material:Cesium.Material.fromType('Color',{color:col}) });
+      vizPoints.add({ position:Cesium.Cartesian3.fromDegrees(d.source[0],d.source[1],H), pixelSize:2.6, color:col.withAlpha(0.8) });
+    }
+  };
+  if(vizCurShown)addSet(vizCurField,waterSamples,FL.CUR_COLOR,245,1.9);
+  if(vizWindShown)addSet(vizWindField,samples,FL.WIND_COLOR,235,1.6);
 }
 
 // ════════════════════ ETA histogram (SVG) ════════════════════
@@ -897,18 +954,19 @@ function buildRouteRequest(){
 // Fallback chain per the route.compute contract: cloud (later) → sidecar →
 // local JS. Typed landlocked errors are user errors, not fallback triggers.
 const SIDECAR='http://127.0.0.1:9124';
-let sidecarJobId=null, routeEngine='js';
+let sidecarJobId=null, routeEngine='js', forceNextRoute=false;
 async function routeFleetSmart(onPhase){
   const phase=(text,sub,pct)=>{ try{ onPhase&&onPhase(text,sub,pct); }catch(e){} };
   try{
     const req=buildRouteRequest();
-    let r=await fetch(SIDECAR+'/route/compute',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(req)});
+    const computeUrl=SIDECAR+'/route/compute'+(forceNextRoute?'?force=1':''); forceNextRoute=false;
+    let r=await fetch(computeUrl,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(req)});
     if(r.status===409){
       // stale/parallel job (e.g. a reroute racing a boot) — cancel and retry once
       const j=await r.json();
       await fetch(`${SIDECAR}/route/cancel/${j.job_id}`,{method:'POST'}).catch(()=>{});
       await new Promise(s=>setTimeout(s,300));
-      r=await fetch(SIDECAR+'/route/compute',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(req)});
+      r=await fetch(computeUrl,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(req)});
     }
     if(!r.ok)throw new Error('sidecar compute HTTP '+r.status);
     const {job_id}=await r.json();
@@ -986,8 +1044,16 @@ function positionCameras(){
   const mid={lat:(START.lat+DEST.lat)/2, lon:(START.lon+DEST.lon)/2};
   const alt=Math.min(12e6,Math.max(150000,gcDistance(START,DEST)*1852*0.8));
   mainViewer.camera.setView({ destination:Cesium.Cartesian3.fromDegrees(mid.lon,mid.lat,alt), orientation:{ heading:0, pitch:Cesium.Math.toRadians(-90), roll:0 } });
-  depViewer.camera.setView({ destination:Cesium.Cartesian3.fromDegrees(START.lon, START.lat-0.012, 1600), orientation:{ heading:0, pitch:Cesium.Math.toRadians(-28), roll:0 } });
-  arrViewer.camera.setView({ destination:Cesium.Cartesian3.fromDegrees(DEST.lon, DEST.lat-0.012, 1600), orientation:{ heading:0, pitch:Cesium.Math.toRadians(-28), roll:0 } });
+  positionMiniCameras();
+}
+// Miniview cameras aim at the WATER anchors when known — the raw geocoded
+// port can sit far inland and high ("Hawaii, United States" is up Mauna Loa
+// at ~4 km; a camera at 1600 m altitude ends up inside the mountain and
+// renders tile-skeleton rings).
+function positionMiniCameras(){
+  const d=depAnchor||START, a=arrAnchor||DEST;
+  depViewer.camera.setView({ destination:Cesium.Cartesian3.fromDegrees(d.lon, d.lat-0.012, 1600), orientation:{ heading:0, pitch:Cesium.Math.toRadians(-28), roll:0 } });
+  arrViewer.camera.setView({ destination:Cesium.Cartesian3.fromDegrees(a.lon, a.lat-0.012, 1600), orientation:{ heading:0, pitch:Cesium.Math.toRadians(-28), roll:0 } });
 }
 
 // ════════════════════ live fetch + route (boot AND port changes) ════════════════════
@@ -998,7 +1064,8 @@ async function loadLiveAndRoute(){
   loader.classList.remove('hidden','fatal'); loader.querySelector('.ring').style.display='';
   loaderBar.style.width='0%';
   const errBox=loader.querySelector('.err-detail'); if(errBox)errBox.remove();
-  refreshWindGrid(); // visualization-only — parallel, fail soft
+  refreshWindGrid(); // readout grid — parallel, fail soft
+  refreshVizFields(); // wind/current line layers — parallel, fail soft
   try{
     // Retry the whole live fetch — single transient failures shouldn't kill it.
     // Quota errors are terminal for the day; total failure falls back to the
@@ -1032,6 +1099,7 @@ async function loadLiveAndRoute(){
       loaderText.textContent=text; if(sub!==undefined)loaderSub.textContent=sub;
       if(pct!==undefined)loaderBar.style.width=pct+'%';
     });
+    positionMiniCameras(); // anchors are known now — aim the harbor views at water
     if(!routes.some(r=>r.path.length>=2))
       throw new Error('The fleet could not leave the departure anchor — it appears to be landlocked. Pick a coastal departure port.');
     lastRoutes=routes;
@@ -1075,9 +1143,8 @@ async function refreshWindGrid(attempt=1){
   if(windGridRetryTimer){ clearTimeout(windGridRetryTimer); windGridRetryTimer=null; }
   try{
     const g=await fetchWindGrid();
-    if(windPLC){ mainViewer.scene.primitives.remove(windPLC); windPLC=null; }
-    buildWindLayer(g);
-    b.disabled=false; b.textContent='WIND'; b.classList.toggle('active',windShown);
+    windGrid=g; updateWindReadouts(null);
+    b.disabled=false; b.textContent='WIND'; b.classList.toggle('active',vizWindShown);
     console.log('[routing] wind grid ready:',g.length,'pts');
   }catch(e){ console.warn('[routing] wind grid unavailable:',e.message);
     b.disabled=true; b.classList.remove('active'); b.textContent='WIND —';
@@ -1233,8 +1300,12 @@ async function main(){
   depSlider.addEventListener('input',()=>{ depOffsetHours=parseInt(depSlider.value,10); updateDepClock(); if(deb)clearTimeout(deb); deb=setTimeout(rerouteAndRender,150); });
   document.getElementById('scrub').addEventListener('input',e=>{ setPlaying(false); setScrub(parseFloat(e.target.value),true); });
   document.getElementById('playBtn').addEventListener('click',()=>setPlaying(!playing));
-  document.getElementById('windBtn').addEventListener('click',()=>{ windShown=!windShown; if(windPLC)windPLC.show=windShown;
-    document.getElementById('windBtn').classList.toggle('active',windShown); });
+  document.getElementById('windBtn').addEventListener('click',()=>{ vizWindShown=!vizWindShown;
+    localStorage.setItem('meridian.routing.windViz',vizWindShown?'1':'0');
+    document.getElementById('windBtn').classList.toggle('active',vizWindShown); renderFieldViz(true); });
+  document.getElementById('curBtn').addEventListener('click',()=>{ vizCurShown=!vizCurShown;
+    localStorage.setItem('meridian.routing.curViz',vizCurShown?'1':'0');
+    document.getElementById('curBtn').classList.toggle('active',vizCurShown); renderFieldViz(true); });
   document.getElementById('fleetBtn').addEventListener('click',()=>{ fleetShown=!fleetShown;
     for(const ent of fleetEntities)ent.show=fleetShown;
     document.getElementById('fleetBtn').classList.toggle('active',fleetShown); });
@@ -1245,6 +1316,7 @@ async function main(){
     mKt.value=MOTORING.motorKt; mTh.value=MOTORING.thresholdKt; mKt.disabled=mTh.disabled=!MOTORING.enabled; };
   syncMotorUi();
   mBtn.addEventListener('click',()=>{ MOTORING.enabled=!MOTORING.enabled; saveMotoring(); syncMotorUi(); rerouteAndRender(); });
+  document.getElementById('recalcBtn').addEventListener('click',()=>{ forceNextRoute=true; rerouteAndRender(); });
   let mDeb=null;
   const onParam=()=>{ const kt=parseFloat(mKt.value),th=parseFloat(mTh.value);
     if(Number.isFinite(kt)&&kt>=2&&kt<=12)MOTORING.motorKt=kt;

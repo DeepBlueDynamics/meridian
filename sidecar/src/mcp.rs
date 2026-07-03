@@ -392,7 +392,7 @@ impl MeridianMcp {
             Ok(p) => p,
             Err(e) => return Ok(text_ok(format!("bad request: {e} — the shape must match buildRouteRequest()"))),
         };
-        match self.jobs.try_start(parsed) {
+        match self.jobs.try_start(parsed, None) {
             Ok(id) => Ok(text_ok(serde_json::json!({"job_id": id}).to_string())),
             Err(active) => Ok(text_ok(format!(
                 "a route job is already running ({active}) — poll route_status or cancel via POST /route/cancel/{active}"
