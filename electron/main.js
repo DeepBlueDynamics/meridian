@@ -168,6 +168,26 @@ const MCP_TOOLS = [
     description: "Current Meridian window bounds, content size, and display info (work area, scale factor) — check before/after a recording resize.",
     inputSchema: { type: "object", properties: {} },
   },
+  {
+    name: "app_screenshot",
+    description: "Screenshot the Meridian app (PNG image content). Canvas-primary capture works even when the window is occluded. Same contract as the meridian sidecar's tool.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        view: { type: "string", enum: ["main", "dep", "arr"], description: "Which canvas: main (default), or the routing view's dep/arr miniviews" },
+      },
+    },
+  },
+  {
+    name: "telemetry_tail",
+    description: "Tail meridian/telemetry.log (JSON-lines: renderer errors, unhandled rejections, custom events). The first place to look when a view misbehaves.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        lines: { type: "number", description: "Trailing lines (default 20, max 200)" },
+      },
+    },
+  },
 ];
 function mcpWindowBounds() {
   const b = mainWin.getBounds();
@@ -323,7 +343,24 @@ function startControlServer() {
         if (msg.method === "tools/call") {
           const name = msg.params && msg.params.name, args = (msg.params && msg.params.arguments) || {};
           try {
+            if (name === "telemetry_tail") {
+              let text = "telemetry.log not found — no telemetry has been written yet";
+              try {
+                const lines = fs.readFileSync(TELEMETRY_LOG, "utf8").split(/\r?\n/).filter(Boolean);
+                text = lines.slice(-Math.min(args.lines || 20, 200)).join("\n") || "telemetry.log is empty";
+              } catch (err) { /* keep the not-found text */ }
+              return reply({ content: [{ type: "text", text }] });
+            }
             if (!mainWin || mainWin.isDestroyed()) throw new Error("no app window");
+            if (name === "app_screenshot") {
+              const dataUrl = await captureScreenshot(args.view || "main");
+              const i = dataUrl.indexOf("base64,");
+              if (i < 0) return reply({ content: [{ type: "text", text: "capture produced no image data — the window may be mid-boot; retry" }] });
+              return reply({ content: [
+                { type: "image", data: dataUrl.slice(i + 7), mimeType: "image/png" },
+                { type: "text", text: "view: " + (args.view || "main") },
+              ] });
+            }
             let out;
             if (name === "window_resize") out = mcpWindowResize(args);
             else if (name === "window_bounds") out = mcpWindowBounds();
