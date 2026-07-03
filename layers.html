@@ -69,6 +69,7 @@
   .toggle-btn.cur.active .dot { background:var(--cur); box-shadow:0 0 7px rgba(79,163,255,0.8); }
   .toggle-btn.lbl.active .dot { background:var(--cool); }
   .toggle-btn .meta { margin-left:auto; color:var(--ink-faint); font-size:9px; }
+  .legend-conv.maplegend { position:absolute; left:10px; bottom:64px; z-index:5; background:rgba(10,15,24,0.82); border-color:var(--line-bright); }
   .legend-conv { border:1px solid var(--line); border-radius:4px; padding:10px 12px; font-family:var(--mono); font-size:10px;
     color:var(--ink-dim); line-height:1.9; background:var(--bg-2); }
   .legend-conv .sw { display:inline-block; width:26px; height:2px; vertical-align:middle; margin-right:8px; }
@@ -124,7 +125,11 @@
         <div class="m" id="ndPos">move cursor over chart</div>
       </div>
 
-      <div class="scrubbar" id="scrubbar">
+      <div class="legend-conv maplegend">
+          <div><span class="sw" style="background:var(--mean)"></span>wind — points where it's <b>going</b></div>
+          <div><span class="sw" style="background:var(--cur)"></span>current — points where it <b>sets</b> · √scale</div>
+        </div>
+        <div class="scrubbar" id="scrubbar">
         <button class="sbtn" id="playBtn" title="Play / pause forecast">▶</button>
         <button class="sbtn" id="stepBack" title="Step −1 h">−1h</button>
         <button class="sbtn" id="stepFwd" title="Step +1 h">+1h</button>
@@ -155,11 +160,6 @@
 
       <div>
         <p class="section-label">Convention · committed</p>
-        <div class="legend-conv">
-          <div><span class="sw" style="background:var(--mean)"></span>wind — points where it's <b>going</b> (from-dir +180°)</div>
-          <div><span class="sw" style="background:var(--cur)"></span>current — points where it <b>sets</b> (no flip) · √scale</div>
-          <div class="note">shared anchor · length ∝ speed · sampled every ~48 px</div>
-        </div>
       </div>
 
       <div>
