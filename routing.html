@@ -86,15 +86,34 @@
   .scrubbar input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:13px; height:13px; border-radius:50%; background:var(--mean); cursor:pointer; border:2px solid var(--bg); }
   .scrubbar .t { font-family:var(--mono); font-size:10.5px; color:var(--ink-dim); white-space:nowrap; }
   .scrubbar .t b { color:var(--envelope); }
-  .legend { position:absolute; right:14px; top:10px; z-index:5; display:flex; gap:14px; align-items:center;
+  .legend { position:absolute; right:14px; top:58px; z-index:5; display:flex; gap:14px; align-items:center;
     font-family:var(--mono); font-size:9.5px; letter-spacing:0.08em; color:var(--ink-dim);
     background:rgba(10,15,24,0.65); border:1px solid var(--line); padding:5px 10px; pointer-events:none; }
   .legend .li { display:inline-flex; align-items:center; gap:5px; }
   .legend .li i { display:inline-block; width:16px; height:3px; border-radius:1px; }
   .legend .li i.dash { background:repeating-linear-gradient(90deg,var(--ink-dim) 0 4px,transparent 4px 7px); }
 
-  .harbors { display:grid; grid-template-columns:1fr 1fr; border-top:1px solid var(--line); overflow:hidden; }
+  .harbors { display:grid; grid-template-columns:1fr 1fr; border-top:1px solid var(--line); overflow:hidden; position:relative; }
   .harbors .pane:last-child { border-right:none; }
+  /* drag handle: resize the port views by their top edge */
+  .hresize { position:absolute; left:0; right:0; top:0; height:9px; z-index:9; cursor:ns-resize; touch-action:none; }
+  .hresize::after { content:''; position:absolute; left:50%; top:3px; transform:translateX(-50%); width:66px; height:3px;
+    border-radius:2px; background:var(--line-bright); opacity:.6; }
+  .hresize:hover::after { background:var(--ink-dim); opacity:1; }
+  /* dep/arr docks — the port boxes live here now, not the top bar */
+  .pane .dock { position:absolute; left:0; right:0; bottom:0; z-index:7; display:flex; align-items:center; gap:10px;
+    padding:5px 10px; background:linear-gradient(180deg, rgba(4,10,19,0.55), rgba(4,10,19,0.94)); border-top:1px solid var(--line); }
+  .pane .dock .rbox { padding:3px 11px; min-width:0; }
+  .pane .dock .rbox .rplace { font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:260px; }
+  .pane .dock .dockwx { font-family:var(--mono); font-size:10px; color:var(--cool); letter-spacing:0.06em; white-space:nowrap; }
+  .pane .dock .dockwx b { color:var(--cool); }
+  .pane .dock .mini { margin-left:auto; background:transparent; border:1px solid var(--line-bright); color:var(--ink-dim);
+    font-family:var(--mono); font-size:11px; padding:4px 9px; border-radius:3px; cursor:pointer; flex-shrink:0; }
+  .pane .dock .mini:hover { color:var(--ink); border-color:var(--ink-dim); }
+  .pane.min > .cz, .pane.min > .tag { display:none; }
+  /* passage stats moved from the top bar onto the main map */
+  .mapstats { position:absolute; right:14px; top:10px; z-index:6; display:flex; gap:8px; }
+  .mapstats .rdist { padding:4px 11px; }
   /* Attribution stays on the main passage view (ToS); the two small insets show
      the same imagery, so their duplicate credit strips are hidden. */
   .harbors .cesium-widget-credits { display:none !important; }
@@ -168,15 +187,10 @@
 </head>
 <body>
 <div id="app">
+  <!-- Top bar carries brand + nav only; the route boxes live on the map
+       views now (dep/arr docks + main-map stat chips) — they overflowed the
+       header with long port names. -->
   <header data-meridian-header="Routing">
-    <div class="route">
-      <div class="rbox dep click" id="depBox" title="Click to change departure port"><span class="rlabel">DEP ▾</span><span class="rplace" id="depPlace">Newport, RI</span><span class="rcoord" id="depCoord">41.49°N · 71.32°W</span></div>
-      <div class="rarrow">→</div>
-      <div class="rbox arr click" id="arrBox" title="Click to change arrival port"><span class="rlabel">ARR ▾</span><span class="rplace" id="arrPlace">St. George's, Bermuda</span><span class="rcoord" id="arrCoord">32.38°N · 64.68°W</span></div>
-      <div class="rdist"><span class="rlabel">DIST</span><span class="rplace" id="distLabel">635 nm</span></div>
-      <div class="rdist wx"><span class="rlabel">WIND</span><span class="rplace" id="windNow">—</span><span class="rsub">at boat · live</span></div>
-      <div class="rdist gust"><span class="rlabel">GUST</span><span class="rplace" id="gustNow">—</span><span class="rsub">at boat · live</span></div>
-    </div>
     <span class="live" id="liveStamp">Fetching live</span>
   </header>
 
@@ -198,6 +212,11 @@
           <button class="sbtn active" id="windBtn" title="Toggle live wind field">WIND</button>
           <button class="sbtn" id="fleetBtn" title="Show all ensemble member routes">FLEET</button>
         </div>
+        <div class="mapstats">
+          <div class="rdist"><span class="rlabel">DIST</span><span class="rplace" id="distLabel">635 nm</span></div>
+          <div class="rdist wx"><span class="rlabel">WIND</span><span class="rplace" id="windNow">—</span><span class="rsub">at boat · live</span></div>
+          <div class="rdist gust"><span class="rlabel">GUST</span><span class="rplace" id="gustNow">—</span><span class="rsub">at boat · live</span></div>
+        </div>
         <div class="legend" id="routeLegend" style="display:none">
           <span class="li"><i style="background:#4ecdc4"></i>P5 fast</span>
           <span class="li"><i style="background:#f4f7fc"></i>P50 median</span>
@@ -211,9 +230,24 @@
           <div class="progress"><div class="bar" id="loaderBar"></div></div>
         </div>
       </div>
-      <div class="harbors">
-        <div class="pane" id="depPane"><div id="depView" class="cz"></div><div class="tag" id="depTag"><b>DEP</b> · Newport, RI</div><div class="tag wx" id="depWind"><b>WIND</b> —</div></div>
-        <div class="pane" id="arrPane"><div id="arrView" class="cz"></div><div class="tag" id="arrTag"><b>ARR</b> · St. George's, BM</div><div class="tag wx" id="arrWind"><b>WIND</b> —</div></div>
+      <div class="harbors" id="harbors">
+        <div class="hresize" id="harborsResize" title="Drag to resize the port views"></div>
+        <div class="pane" id="depPane">
+          <div id="depView" class="cz"></div>
+          <div class="dock">
+            <div class="rbox dep click" id="depBox" title="Click to change departure port"><span class="rlabel">DEP ▾</span><span class="rplace" id="depPlace">Newport, RI</span><span class="rcoord" id="depCoord">41.49°N · 71.32°W</span></div>
+            <div class="dockwx" id="depWind"><b>WIND</b> —</div>
+            <button class="mini" id="depMini" title="Minimize the departure view">▾</button>
+          </div>
+        </div>
+        <div class="pane" id="arrPane">
+          <div id="arrView" class="cz"></div>
+          <div class="dock">
+            <div class="rbox arr click" id="arrBox" title="Click to change arrival port"><span class="rlabel">ARR ▾</span><span class="rplace" id="arrPlace">St. George's, Bermuda</span><span class="rcoord" id="arrCoord">32.38°N · 64.68°W</span></div>
+            <div class="dockwx" id="arrWind"><b>WIND</b> —</div>
+            <button class="mini" id="arrMini" title="Minimize the arrival view">▾</button>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -854,8 +888,6 @@ function updateHeaderRoute(){
   document.getElementById('depPlace').textContent=START.name; document.getElementById('depCoord').textContent=fmtCoord(START);
   document.getElementById('arrPlace').textContent=DEST.name;  document.getElementById('arrCoord').textContent=fmtCoord(DEST);
   document.getElementById('distLabel').textContent=Math.round(gcDistance(START,DEST))+' nm';
-  document.getElementById('depTag').innerHTML=`<b>DEP</b> · ${START.name}`;
-  document.getElementById('arrTag').innerHTML=`<b>ARR</b> · ${DEST.name}`;
 }
 function positionCameras(){
   const mid={lat:(START.lat+DEST.lat)/2, lon:(START.lon+DEST.lon)/2};
@@ -988,7 +1020,11 @@ function openPortSearch(which,anchorEl){
   portWhich=which;
   const ps=document.getElementById('portSearch'), input=document.getElementById('portInput');
   const rect=anchorEl.getBoundingClientRect();
-  ps.style.left=Math.round(rect.left)+'px'; ps.style.top=Math.round(rect.bottom+6)+'px'; ps.style.display='block';
+  ps.style.left=Math.round(Math.min(rect.left, innerWidth-340))+'px';
+  // dock anchors sit at the bottom of the screen — open upward there
+  if(rect.bottom+330>innerHeight){ ps.style.top=Math.round(rect.top-6)+'px'; ps.style.transform='translateY(-100%)'; }
+  else { ps.style.top=Math.round(rect.bottom+6)+'px'; ps.style.transform=''; }
+  ps.style.display='block';
   document.getElementById('portResults').innerHTML='';
   input.value=''; input.placeholder=`Search ${which==='dep'?'departure':'arrival'} port…`; input.focus();
   document.getElementById(which==='dep'?'depPane':'arrPane').classList.add('focus');
@@ -1009,6 +1045,41 @@ async function setPort(which,place){
   updateHeaderRoute(); positionCameras();
   await loadLiveAndRoute();
 }
+// ── dep/arr miniviews: resizable row + per-pane minimize (persisted) ────────
+(function(){
+  const leftEl=document.querySelector('.left'), DOCK_H=54;
+  let harborsH=+(localStorage.getItem('meridian.routing.harborsH')||0);
+  const paneMin={ dep: localStorage.getItem('meridian.routing.depMin')==='1',
+                  arr: localStorage.getItem('meridian.routing.arrMin')==='1' };
+  function applyHarbors(){
+    document.getElementById('depPane').classList.toggle('min',paneMin.dep);
+    document.getElementById('arrPane').classList.toggle('min',paneMin.arr);
+    document.getElementById('depMini').textContent=paneMin.dep?'▴':'▾';
+    document.getElementById('arrMini').textContent=paneMin.arr?'▴':'▾';
+    const both=paneMin.dep&&paneMin.arr;
+    document.getElementById('harborsResize').style.display=both?'none':'';
+    // both minimized → row collapses to just the docks; else saved/default height
+    leftEl.style.gridTemplateRows = both ? `1fr ${DOCK_H}px`
+      : (harborsH>DOCK_H ? `1fr ${harborsH}px` : '1fr 38%');
+  }
+  function toggleMin(which){
+    paneMin[which]=!paneMin[which];
+    try{ localStorage.setItem('meridian.routing.'+which+'Min',paneMin[which]?'1':'0'); }catch(e){}
+    applyHarbors();
+  }
+  document.getElementById('depMini').addEventListener('click',()=>toggleMin('dep'));
+  document.getElementById('arrMini').addEventListener('click',()=>toggleMin('arr'));
+  const h=document.getElementById('harborsResize'); let drag=null;
+  h.addEventListener('pointerdown',e=>{ drag={y:e.clientY,h:document.getElementById('harbors').getBoundingClientRect().height};
+    h.setPointerCapture(e.pointerId); e.preventDefault(); });
+  h.addEventListener('pointermove',e=>{ if(!drag)return;
+    harborsH=Math.max(DOCK_H+40,Math.min(leftEl.getBoundingClientRect().height-180, drag.h+(drag.y-e.clientY)));
+    leftEl.style.gridTemplateRows=`1fr ${harborsH}px`; });
+  h.addEventListener('pointerup',()=>{ if(!drag)return; drag=null;
+    try{ localStorage.setItem('meridian.routing.harborsH',String(Math.round(harborsH))); }catch(e){} });
+  applyHarbors();
+})();
+
 function bindPortSearch(){
   document.getElementById('depBox').addEventListener('click',()=>openPortSearch('dep',document.getElementById('depBox')));
   document.getElementById('arrBox').addEventListener('click',()=>openPortSearch('arr',document.getElementById('arrBox')));
