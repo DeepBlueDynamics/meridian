@@ -215,7 +215,7 @@
     <div class="left">
       <div class="pane">
         <div id="mainView" class="cz"></div>
-        <canvas id="flowCanvas" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:4;display:none;"></canvas>
+        <canvas id="flowCanvas" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:4;display:none;transition:opacity .25s;"></canvas>
         <div class="tag"><b>Passage</b> · isochrone ensemble on Google 3D Tiles</div>
         <div class="scrubbar" id="scrubbar" style="display:none">
           <button class="sbtn" id="playBtn" title="Play / pause passage">▶</button>
@@ -409,7 +409,9 @@ const arrViewer  = makeViewer("arrView", false);
 // per notch; ~1.8 gives usable fine control at harbor scales.
 for(const v of [mainViewer,depViewer,arrViewer]) v.scene.screenSpaceCameraController._zoomFactor=1.8;
 // re-sample the wind/current lines when the camera settles
-mainViewer.camera.moveEnd.addEventListener(()=>{ try{ if(typeof vizMode!=='undefined'&&vizMode==='flow'){ rFlowInvalidate(); rFlowUpdate(); } else renderFieldViz(); }catch(e){} });
+mainViewer.camera.moveStart.addEventListener(()=>{ const cv=document.getElementById('flowCanvas'); if(cv)cv.style.opacity='0.12'; });
+mainViewer.camera.moveEnd.addEventListener(()=>{ try{ const cv=document.getElementById('flowCanvas'); if(cv)cv.style.opacity='1';
+  if(typeof vizMode!=='undefined'&&vizMode==='flow'){ rFlowInvalidate(); rFlowUpdate(); } else renderFieldViz(); }catch(e){} });
 
 // ════════════════════ route endpoints (editable, persisted) ════════════════════
 const DEFAULT_ROUTE = {
@@ -951,6 +953,11 @@ function rFlowUpdate(){
   if(!bounds){ cv.style.display='none'; if(rflow)rflow.stop(); return; }
   rFlowInit(); if(!rflow)return;
   cv.style.display=''; rflow.start();
+  // zoomed in = half the particles (2200/1400 → 1100/700): at harbor
+  // scales the full fleet of specks is visual noise and wasted GPU
+  const dense=mainViewer.camera.positionCartographic.height>500e3;
+  if(rflow._dense!==dense){ rflow._dense=dense;
+    rflowWind.setNumParticles(dense?2200:1100); rflowCur.setNumParticles(dense?1400:700); }
   rflowWind.enabled=vizWindShown&&!!vizWindField;
   rflowCur.enabled=vizCurShown&&!!vizCurField;
   if(vizWindField){
