@@ -35,3 +35,10 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 anyhow = "1"
 clap = { version = "4", features = ["derive", "env"] }
+
+# Route engine (isochrone port). libm = fdlibm-lineage transcendentals that
+# bit-match V8's ieee754.cc — std::f64 trig uses the platform CRT and drifts
+# by ulps, which flips engine branches. Verified by tests/math_parity.rs
+# against a corpus generated from node (scripts/gen-math-corpus.mjs).
+libm = "0.2"
+rayon = "1.10"

@@ -52,3 +52,4 @@ spec/archive/
 
 # rust sidecar build artifacts
 sidecar/target/
+sidecar/tests/corpus/
