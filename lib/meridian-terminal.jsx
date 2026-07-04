@@ -1826,6 +1826,16 @@ function MeridianTerminal() {
   }, [toolRegistry]);
 
   // ═══════════════════════════════════════════════════════════════════════════
+  // LLM WIRE — unified relay on :9123 (provider translation lives in the
+  // main process; the key never reaches this page). Model is picked in
+  // Setup → Config → Helm · AI. Claude replies can lead with thinking
+  // blocks, so text is found by block type, never by position.
+  // ═══════════════════════════════════════════════════════════════════════════
+  const LLM_URL = 'http://127.0.0.1:9123/llm/messages';
+  const llmModel = () => localStorage.getItem('meridian.helm.model') || 'claude-sonnet-5';
+  const llmText = (data) => (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
+
+  // ═══════════════════════════════════════════════════════════════════════════
   // API CALL 1: SHELL HANDLER - interprets user input
   // ═══════════════════════════════════════════════════════════════════════════
   const shellHandler = async (userInput, imageData = null) => {
@@ -1891,18 +1901,19 @@ User + IMAGE of a gauge: → "Creating battery gauge. [[create:battery_gauge:cir
       // Replace last message with image-enhanced version
       const messagesWithImage = [...messages.slice(0, -1), userMessage];
 
-      const res = await fetch('http://127.0.0.1:9123/anthropic/messages', {
+      const res = await fetch(LLM_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
-          max_tokens: 300,
+          model: llmModel(),
+          max_tokens: 1000,
           system: systemPrompt,
           messages: messagesWithImage.length > 0 ? messagesWithImage : [userMessage],
         }),
       });
       const data = await res.json();
-      return data.content?.[0]?.text || 'No response';
+      if (data.type === 'error') throw new Error(data.error?.message || `API ${res.status}`);
+      return llmText(data) || 'No response';
     } catch (err) {
       return `Comms error: ${err.message}`;
     }
@@ -2055,11 +2066,11 @@ Return ONLY the arrow function. No markdown. No backticks. No explanation.`;
     // Try up to 2 times
     for (let attempt = 1; attempt <= 2; attempt++) {
       try {
-        const res = await fetch('http://127.0.0.1:9123/anthropic/messages', {
+        const res = await fetch(LLM_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            model: 'claude-sonnet-4-20250514',
+            model: llmModel(),
             max_tokens: 2000,
             messages: [{ 
               role: 'user', 
@@ -2072,8 +2083,9 @@ Return ONLY the arrow function. No markdown. No backticks. No explanation.`;
           }),
         });
         const data = await res.json();
-        let code = data.content?.[0]?.text || '';
-        
+        if (data.type === 'error') throw new Error(data.error?.message || `API ${res.status}`);
+        let code = llmText(data);
+
         // Clean up markdown and common issues
         code = code
           .replace(/```[\w]*\n?/g, '')  // Remove markdown code blocks
@@ -2166,18 +2178,19 @@ Ship data fields: windSpeed, windAngle, windGust, heading, cog, sog, lat, lon, d
 Write the FIXED component as ({ onClose, code, description }) => { ... }. Return ONLY the arrow function. No markdown. No backticks.`;
 
     try {
-      const res = await fetch('http://127.0.0.1:9123/anthropic/messages', {
+      const res = await fetch(LLM_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
+          model: llmModel(),
           max_tokens: 2000,
           messages: [{ role: 'user', content: prompt }],
         }),
       });
       const data = await res.json();
-      let code = data.content?.[0]?.text || '';
-      
+      if (data.type === 'error') throw new Error(data.error?.message || `API ${res.status}`);
+      let code = llmText(data);
+
       code = code.replace(/```[\w]*\n?/g, '').replace(/```/g, '').trim();
       
       // Match arrow function with either ({ onClose }) or ({ onClose, onDownload })

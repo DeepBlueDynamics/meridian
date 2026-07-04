@@ -269,6 +269,7 @@ async function executeBridgeCommand(msg) {
 }
 
 function startControlServer() {
+  let modelsCache = { body: null, expires: 0 };
   const server = http.createServer(async (req, res) => {
     res.setHeader("Access-Control-Allow-Origin", "*");
     const url = new URL(req.url, "http://127.0.0.1");
@@ -305,10 +306,20 @@ function startControlServer() {
       // request) — no restart. Never echo the key back.
       if (url.pathname === "/config/status") {
         res.setHeader("Content-Type", "application/json");
-        res.end(JSON.stringify({ anthropicKey: !!process.env.ANTHROPIC_API_KEY }));
+        res.end(JSON.stringify({
+          anthropicKey: !!process.env.ANTHROPIC_API_KEY,
+          openaiKey: !!process.env.OPENAI_API_KEY,
+          geminiKey: !!process.env.GEMINI_API_KEY,
+        }));
         return;
       }
-      if (url.pathname === "/config/anthropic-key" && req.method === "POST") {
+      const KEY_ROUTES = {
+        "/config/anthropic-key": "ANTHROPIC_API_KEY",
+        "/config/openai-key": "OPENAI_API_KEY",
+        "/config/gemini-key": "GEMINI_API_KEY",
+      };
+      if (KEY_ROUTES[url.pathname] && req.method === "POST") {
+        const envVar = KEY_ROUTES[url.pathname];
         let body = "";
         for await (const c of req) body += c;
         let key = "";
@@ -316,13 +327,38 @@ function startControlServer() {
         const envPath = path.join(__dirname, "..", ".env");
         let env = "";
         try { env = fs.readFileSync(envPath, "utf8"); } catch (e) { /* new file */ }
-        const line = "ANTHROPIC_API_KEY=" + key;
-        if (/^ANTHROPIC_API_KEY=.*$/m.test(env)) env = env.replace(/^ANTHROPIC_API_KEY=.*$/m, line);
+        const line = envVar + "=" + key;
+        if (new RegExp("^" + envVar + "=.*$", "m").test(env)) env = env.replace(new RegExp("^" + envVar + "=.*$", "m"), line);
         else env += (env.endsWith("\n") || env === "" ? "" : "\n") + line + "\n";
         fs.writeFileSync(envPath, env);
-        if (key) process.env.ANTHROPIC_API_KEY = key; else delete process.env.ANTHROPIC_API_KEY;
+        if (key) process.env[envVar] = key; else delete process.env[envVar];
         res.setHeader("Content-Type", "application/json");
         res.end(JSON.stringify({ ok: true, set: !!key }));
+        return;
+      }
+      // Model catalog — proxied from nemesis8 (file:// pages can't fetch it
+      // cross-origin) and trimmed to the providers the relay below speaks.
+      // Cached per the payload's own ttl_seconds.
+      if (url.pathname === "/models" && req.method === "GET") {
+        res.setHeader("Content-Type", "application/json");
+        try {
+          if (!modelsCache.body || Date.now() > modelsCache.expires) {
+            const up = await net.fetch("https://nemesis8.nuts.services/models");
+            const j = await up.json();
+            modelsCache = {
+              body: JSON.stringify({ providers: {
+                claude: j.providers?.claude || null,
+                openai: j.providers?.codex || null,
+                gemini: j.providers?.gemini || null,
+              } }),
+              expires: Date.now() + Math.max(60, j.ttl_seconds || 3600) * 1000,
+            };
+          }
+          res.end(modelsCache.body);
+        } catch (e) {
+          res.statusCode = 502;
+          res.end(JSON.stringify({ error: { message: "models fetch: " + (e && e.message || e) } }));
+        }
         return;
       }
       // Anthropic relay for the Helm terminal's widget builder — the key
@@ -349,6 +385,87 @@ function startControlServer() {
         } catch (e) {
           res.statusCode = 502;
           res.end(JSON.stringify({ error: { message: "relay: " + (e && e.message || e) } }));
+        }
+        return;
+      }
+      // Unified LLM relay — the renderer always speaks the Anthropic
+      // Messages shape; provider translation (OpenAI chat, Gemini
+      // generateContent) happens HERE so keys never leave the main process
+      // and the Helm terminal stays provider-agnostic. Provider is inferred
+      // from the model id (claude-* / gemini-* / everything else = OpenAI).
+      // Responses normalize to {type:"message", content:[{type:"text",…}]};
+      // errors to the Anthropic {type:"error"} shape.
+      if (url.pathname === "/llm/messages" && req.method === "POST") {
+        res.setHeader("Content-Type", "application/json");
+        const fail = (code, msg) => { res.statusCode = code; res.end(JSON.stringify({ type: "error", error: { message: msg } })); };
+        let body = "";
+        for await (const c of req) body += c;
+        let rq = null;
+        try { rq = JSON.parse(body); } catch (e) { /* below */ }
+        if (!rq || !rq.model) { fail(400, "bad request: model required"); return; }
+        const model = String(rq.model);
+        const provider = rq.provider || (model.startsWith("claude") ? "claude" : model.startsWith("gemini") ? "gemini" : "openai");
+        delete rq.provider;
+        try {
+          if (provider === "claude") {
+            const key = process.env.ANTHROPIC_API_KEY || "";
+            if (!key) { fail(503, "ANTHROPIC_API_KEY not set — Setup → Config → Helm · AI"); return; }
+            const up = await net.fetch("https://api.anthropic.com/v1/messages", {
+              method: "POST",
+              headers: { "content-type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
+              body: JSON.stringify(rq),
+            });
+            res.statusCode = up.status;
+            res.end(await up.text());
+            return;
+          }
+          if (provider === "openai") {
+            const key = process.env.OPENAI_API_KEY || "";
+            if (!key) { fail(503, "OPENAI_API_KEY not set — Setup → Config → Helm · AI"); return; }
+            const content = (c) => typeof c === "string" ? c : c.map((b) =>
+              b.type === "image"
+                ? { type: "image_url", image_url: { url: "data:" + b.source.media_type + ";base64," + b.source.data } }
+                : { type: "text", text: b.text || "" });
+            const messages = [];
+            if (rq.system) messages.push({ role: "system", content: String(rq.system) });
+            for (const m of rq.messages || []) messages.push({ role: m.role, content: content(m.content) });
+            // max_completion_tokens: the o-series and gpt-5.x reject max_tokens
+            const up = await net.fetch("https://api.openai.com/v1/chat/completions", {
+              method: "POST",
+              headers: { "content-type": "application/json", authorization: "Bearer " + key },
+              body: JSON.stringify({ model, messages, max_completion_tokens: rq.max_tokens || 1024 }),
+            });
+            const d = await up.json().catch(() => ({}));
+            if (!up.ok) { fail(up.status, (d.error && d.error.message) || "openai " + up.status); return; }
+            res.end(JSON.stringify({ type: "message", role: "assistant", model, content: [{ type: "text", text: (d.choices && d.choices[0] && d.choices[0].message && d.choices[0].message.content) || "" }] }));
+            return;
+          }
+          if (provider === "gemini") {
+            const key = process.env.GEMINI_API_KEY || "";
+            if (!key) { fail(503, "GEMINI_API_KEY not set — Setup → Config → Helm · AI"); return; }
+            const parts = (c) => typeof c === "string" ? [{ text: c }] : c.map((b) =>
+              b.type === "image"
+                ? { inline_data: { mime_type: b.source.media_type, data: b.source.data } }
+                : { text: b.text || "" });
+            const gbody = {
+              contents: (rq.messages || []).map((m) => ({ role: m.role === "assistant" ? "model" : "user", parts: parts(m.content) })),
+              generationConfig: { maxOutputTokens: rq.max_tokens || 1024 },
+            };
+            if (rq.system) gbody.system_instruction = { parts: [{ text: String(rq.system) }] };
+            const up = await net.fetch("https://generativelanguage.googleapis.com/v1beta/models/" + encodeURIComponent(model) + ":generateContent?key=" + encodeURIComponent(key), {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify(gbody),
+            });
+            const d = await up.json().catch(() => ({}));
+            if (!up.ok) { fail(up.status, (d.error && d.error.message) || "gemini " + up.status); return; }
+            const text = ((d.candidates && d.candidates[0] && d.candidates[0].content && d.candidates[0].content.parts) || []).map((p) => p.text || "").join("");
+            res.end(JSON.stringify({ type: "message", role: "assistant", model, content: [{ type: "text", text }] }));
+            return;
+          }
+          fail(400, "unknown provider: " + provider);
+        } catch (e) {
+          fail(502, "relay: " + (e && e.message || e));
         }
         return;
       }

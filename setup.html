@@ -229,10 +229,16 @@
 
     <div class="cfg">
       <h3>Helm · AI</h3>
-      <div class="where">widget builder LLM · key lives in .env (main process)</div>
-      <div class="row"><span class="k">Anthropic API key</span><span class="stat" id="aiStat">checking…</span></div>
-      <div class="row"><input type="password" id="aiKey" placeholder="sk-ant-…" style="flex:1;width:auto" /><button class="savebtn" id="aiSave">SET</button></div>
-      <div class="note">Stored in .env, read only by the main process — the renderer sees a loopback relay. Takes effect immediately, no restart. Swaps to the service's infer.complete when its executor lands.</div>
+      <div class="where">widget builder LLM · keys live in .env (main process)</div>
+      <div class="row"><span class="k">Model<span class="sub">live catalog · applies instantly</span></span>
+        <select id="aiModel" style="flex:1;width:auto"><option>loading…</option></select></div>
+      <div class="row"><span class="k">Anthropic key</span><span class="stat" id="aiStat-claude">checking…</span></div>
+      <div class="row"><input type="password" id="aiKey-claude" placeholder="sk-ant-…" style="flex:1;width:auto" /><button class="savebtn" data-keyroute="anthropic-key" data-prov="claude">SET</button></div>
+      <div class="row"><span class="k">OpenAI key</span><span class="stat" id="aiStat-openai">checking…</span></div>
+      <div class="row"><input type="password" id="aiKey-openai" placeholder="sk-…" style="flex:1;width:auto" /><button class="savebtn" data-keyroute="openai-key" data-prov="openai">SET</button></div>
+      <div class="row"><span class="k">Gemini key</span><span class="stat" id="aiStat-gemini">checking…</span></div>
+      <div class="row"><input type="password" id="aiKey-gemini" placeholder="AIza…" style="flex:1;width:auto" /><button class="savebtn" data-keyroute="gemini-key" data-prov="gemini">SET</button></div>
+      <div class="note">Keys stored in .env, read only by the main process — the renderer sees one loopback relay that speaks every provider. Takes effect immediately, no restart. Swaps to the service's infer.complete when its executor lands.</div>
     </div>
 
     <div class="cfg">
@@ -331,22 +337,40 @@ setTab(localStorage.getItem('meridian.setup.tab')||'vessel');
   }
 })();
 
-// ── Helm AI key (main-process .env via the control server) ──
+// ── Helm AI: provider keys (main-process .env) + model picker (:9123/models catalog) ──
 (async function(){
-  const stat=document.getElementById('aiStat');
+  const PROVS=[['claude','anthropicKey','Claude'],['openai','openaiKey','OpenAI'],['gemini','geminiKey','Google Gemini']];
+  const stat=(p)=>document.getElementById('aiStat-'+p);
+  let keys={};
   const refresh=async()=>{
-    try{ const j=await (await fetch('http://127.0.0.1:9123/config/status')).json();
-      stat.textContent=j.anthropicKey?'● SET':'○ NOT SET — helm prompt will not respond';
-      stat.className='stat '+(j.anthropicKey?'ok':'no');
-    }catch(e){ stat.textContent='control server unreachable'; stat.className='stat no'; }
+    try{ keys=await (await fetch('http://127.0.0.1:9123/config/status')).json();
+      for(const [p,flag] of PROVS){ const el=stat(p); el.textContent=keys[flag]?'● SET':'○ not set'; el.className='stat '+(keys[flag]?'ok':'no'); }
+    }catch(e){ for(const [p] of PROVS){ const el=stat(p); el.textContent='control server unreachable'; el.className='stat no'; } }
   };
-  document.getElementById('aiSave').addEventListener('click',async()=>{
-    const key=document.getElementById('aiKey').value.trim();
-    try{ await fetch('http://127.0.0.1:9123/config/anthropic-key',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({key})});
-      document.getElementById('aiKey').value=''; refresh();
-    }catch(e){ stat.textContent='save failed: '+e.message; stat.className='stat no'; }
-  });
-  refresh();
+  document.querySelectorAll('[data-keyroute]').forEach(btn=>btn.addEventListener('click',async()=>{
+    const input=document.getElementById('aiKey-'+btn.dataset.prov);
+    try{ await fetch('http://127.0.0.1:9123/config/'+btn.dataset.keyroute,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({key:input.value.trim()})});
+      input.value=''; refresh();
+    }catch(e){ const el=stat(btn.dataset.prov); el.textContent='save failed: '+e.message; el.className='stat no'; }
+  }));
+  await refresh();
+  // model picker — the terminal reads meridian.helm.model per request, so a
+  // change here applies to the next prompt with no reload
+  const sel=document.getElementById('aiModel');
+  try{
+    const cat=await (await fetch('http://127.0.0.1:9123/models')).json();
+    const cur=localStorage.getItem('meridian.helm.model')||(cat.providers&&cat.providers.claude&&cat.providers.claude.default)||'claude-sonnet-5';
+    sel.innerHTML='';
+    for(const [prov,flag,label] of PROVS){
+      const p=cat.providers&&cat.providers[prov]; if(!p||!p.models||!p.models.length)continue;
+      const og=document.createElement('optgroup'); og.label=label+(keys[flag]?'':' — no key set');
+      for(const m of p.models){ const o=document.createElement('option'); o.value=m.id; o.textContent=m.label||m.id; og.appendChild(o); }
+      sel.appendChild(og);
+    }
+    sel.value=cur;
+    if(sel.value!==cur){ const o=document.createElement('option'); o.value=cur; o.textContent=cur+' (saved)'; sel.insertBefore(o,sel.firstChild); sel.value=cur; }
+    sel.addEventListener('change',()=>{ try{ localStorage.setItem('meridian.helm.model',sel.value); }catch(e){} });
+  }catch(e){ sel.innerHTML='<option>model catalog unreachable</option>'; }
 })();
 
 // ── vessel/polar tab (unchanged logic) ──
