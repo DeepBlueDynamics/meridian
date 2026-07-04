@@ -33,10 +33,16 @@ try {
   Write-Host "   still starting (first run downloads the package) — give it a minute" -ForegroundColor Yellow
 }
 
+# skiff speaks HTTP delta-POST; stock signalk-server only ingests over the
+# WS stream — the bridge translates (see scripts/sk-ingest-bridge.mjs)
+Write-Host ">> sk-ingest-bridge :3100 → ws://127.0.0.1:$Port" -ForegroundColor Cyan
+Start-Process -FilePath "node" -ArgumentList "scripts/sk-ingest-bridge.mjs" -WorkingDirectory $repo -WindowStyle Hidden
+Start-Sleep -Seconds 2
+
 if (-not $NoSkiff) {
   if (Test-Path $skiffExe) {
     Write-Host ">> skiff → SIGNALK_HOST=http://127.0.0.1:$Port" -ForegroundColor Cyan
-    $env:SIGNALK_HOST = "http://127.0.0.1:$Port"
+    $env:SIGNALK_HOST = "http://127.0.0.1:3100"  # via the ingest bridge
     Start-Process -FilePath $skiffExe -WorkingDirectory $skiffDir -WindowStyle Hidden
   } else {
     Write-Host ">> no skiff build at $skiffExe — cargo build --release in the skiff repo" -ForegroundColor Yellow
