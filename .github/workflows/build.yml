@@ -1,0 +1,89 @@
+name: Build & Release
+
+# Windows binaries only for now. Tag v* → build → GitHub Release; manual
+# runs (workflow_dispatch) build and upload artifacts without releasing.
+# Mirrors hyperia's pipeline shape, minus signing (no cert secrets yet —
+# when they exist, add the signtoolOptions block to electron-builder.json
+# and the secret env here) and minus the radio (gnosis-radio source lives
+# outside this repo; installers built on the host bundle it, CI ones ship
+# without — the app is fail-soft either way).
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    # Pinned to windows-2022 (hyperia lesson: windows-latest image bumps can
+    # break electron toolchain steps under us).
+    runs-on: windows-2022
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: sidecar
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build sidecar (release)
+        run: cargo build --release --manifest-path sidecar/Cargo.toml
+
+      # Parity gate — the JS↔Rust route engines must stay bit-identical.
+      # Corpus/fixture tests need generated files (gitignored), so run the
+      # unit-level suites only; golden fixtures stay a host-side check.
+      - name: Sidecar unit tests
+        run: cargo test --release --manifest-path sidecar/Cargo.toml --lib
+
+      - name: Build installer
+        run: npx electron-builder --win
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v5
+        with:
+          name: meridian-windows
+          path: |
+            dist/*.exe
+            dist/*.zip
+            dist/*.blockmap
+            dist/latest*.yml
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v5
+        with:
+          path: artifacts
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: false
+          files: |
+            artifacts/**/*.exe
+            artifacts/**/*.zip
+            artifacts/**/*.blockmap
+            artifacts/**/latest*.yml
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,15 +1,18 @@
 {
   "name": "meridian",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
   "type": "module",
-  "description": "Meridian — marine navigation (Electron + Cesium, Google Photorealistic 3D Tiles).",
+  "description": "Meridian — the agentic marine OS (Electron + Cesium, Google Photorealistic 3D Tiles).",
   "main": "electron/main.js",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "icon": "node scripts/gen-icon.mjs",
+    "dist": "electron-builder --win"
   },
   "devDependencies": {
-    "electron": "^33.0.0"
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8"
   },
   "dependencies": {
     "ws": "^8.21.0"

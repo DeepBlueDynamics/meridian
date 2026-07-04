@@ -7,13 +7,18 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+// Writable app data: the repo root in dev, userData when packaged (the
+// install dir's app.asar is read-only — .env writes, telemetry.log, and
+// user-dropped charts all have to live outside it).
+const DATA_DIR = app.isPackaged ? app.getPath("userData") : path.join(__dirname, "..");
+
 // ── .env (main process only) ──────────────────────────────────────────────
 // The Google key lives ONLY here. It is never sent to the renderer; the proxy
 // below signs outbound requests and rewrites the tileset so the page only ever
 // talks to app://3dtiles/*.
 function loadDotEnv() {
   try {
-    const envPath = path.join(__dirname, "..", ".env");
+    const envPath = path.join(DATA_DIR, ".env");
     if (!fs.existsSync(envPath)) return;
     for (const line of fs.readFileSync(envPath, "utf8").split(/\r?\n/)) {
       const t = line.trim();
@@ -98,7 +103,7 @@ const CONTROL_PORT = 9123;
 // Renderer telemetry sink — stub for a future remote endpoint. For now every
 // event is appended as a JSON line to telemetry.log at the repo root so errors
 // are inspectable locally (and by the agent) after the fact.
-const TELEMETRY_LOG = path.join(__dirname, "..", "telemetry.log");
+const TELEMETRY_LOG = path.join(DATA_DIR, "telemetry.log");
 function logTelemetry(entry) {
   try {
     fs.appendFileSync(TELEMETRY_LOG, JSON.stringify({ ts: new Date().toISOString(), ...entry }) + "\n");
@@ -324,7 +329,7 @@ function startControlServer() {
         for await (const c of req) body += c;
         let key = "";
         try { key = String((JSON.parse(body) || {}).key || "").trim(); } catch (e) { /* empty */ }
-        const envPath = path.join(__dirname, "..", ".env");
+        const envPath = path.join(DATA_DIR, ".env");
         let env = "";
         try { env = fs.readFileSync(envPath, "utf8"); } catch (e) { /* new file */ }
         const line = envVar + "=" + key;
@@ -484,7 +489,7 @@ function startControlServer() {
       // byte ranges, and file:// pages can't fetch local files directly.
       if (url.pathname.startsWith("/charts/") && req.method === "GET") {
         const name = path.basename(url.pathname);
-        const fp = path.join(__dirname, "..", "charts", name);
+        const fp = path.join(DATA_DIR, "charts", name);
         if (!name.endsWith(".pmtiles") || !fs.existsSync(fp)) { res.statusCode = 404; res.end("not found"); return; }
         const size = fs.statSync(fp).size;
         res.setHeader("Accept-Ranges", "bytes");
@@ -718,16 +723,51 @@ function startTranscribeRelay() {
   relay.listen(8765, "127.0.0.1", () => console.log("[transcribe-relay] http://127.0.0.1:8765 → " + SERVICE_BASE + " (gated by remote toggle + JWT)"));
 }
 
+// ── bundled services (packaged builds only) ───────────────────────────────
+// Dev runs the stack via scripts/run.ps1; an installed app owns its own
+// sidecar (routing engine + MCP surface, resources/sidecar/) and, when the
+// installer bundled it, Meridian Radio (resources/radio/). Both are
+// fail-soft: a missing exe or an already-running instance just means the
+// app uses whatever is (or isn't) on the ports.
+const bundledChildren = [];
+async function startBundledServices() {
+  if (!app.isPackaged) return;
+  const { spawn } = await import("node:child_process");
+  const launch = (exe, name) => {
+    if (!fs.existsSync(exe)) return;
+    try {
+      const child = spawn(exe, [], { cwd: path.dirname(exe), stdio: "ignore", windowsHide: true });
+      child.on("error", (e) => console.warn(`[${name}] spawn failed:`, e.message));
+      bundledChildren.push(child);
+      console.log(`[${name}] launched (pid ${child.pid})`);
+    } catch (e) {
+      console.warn(`[${name}] spawn failed:`, e.message);
+    }
+  };
+  // skip the sidecar if one is already serving :9124 (dev stack, prior instance)
+  let sidecarUp = false;
+  try {
+    const ac = new AbortController();
+    const t = setTimeout(() => ac.abort(), 700);
+    sidecarUp = (await net.fetch("http://127.0.0.1:9124/health", { signal: ac.signal })).ok;
+    clearTimeout(t);
+  } catch (e) { /* not up — launch ours */ }
+  if (!sidecarUp) launch(path.join(process.resourcesPath, "sidecar", "meridian-sidecar.exe"), "sidecar");
+  launch(path.join(process.resourcesPath, "radio", "meridian-radio.exe"), "radio");
+}
+
 app.whenReady().then(() => {
   Menu.setApplicationMenu(null); // no File/Edit/View chrome — this is a helm app
   registerTilesProxy();
   createWindow();
   startControlServer();
   startTranscribeRelay();
+  startBundledServices();
   // Agent surface: dial the meridian-sidecar's WS bus (:9124). Fail-soft —
   // the app is fully functional with no sidecar running.
   startBridge({ appVersion: app.getVersion(), getView: () => currentView, execute: executeBridgeCommand });
 });
 
+app.on("will-quit", () => { for (const c of bundledChildren) { try { c.kill(); } catch (e) { /* gone */ } } });
 app.on("window-all-closed", () => { stopBridge(); if (process.platform !== "darwin") app.quit(); });
 app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
