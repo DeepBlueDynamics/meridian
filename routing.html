@@ -218,6 +218,7 @@
         <canvas id="flowCanvas" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:4;display:none;transition:opacity .25s;"></canvas>
         <div class="tag"><b>Passage</b> · isochrone ensemble on Google 3D Tiles</div>
         <div class="tag" id="rangeNotice" style="left:auto;right:14px;top:auto;bottom:64px;display:none;border-color:var(--warn);color:var(--warn)"></div>
+        <div class="tag" id="calmNotice" style="left:auto;right:14px;top:auto;bottom:96px;display:none;border-color:var(--warn);color:var(--warn)"></div>
         <div class="scrubbar" id="scrubbar" style="display:none">
           <button class="sbtn" id="playBtn" title="Play / pause passage">▶</button>
           <input id="scrub" type="range" min="0" max="120" step="1" value="0" />
@@ -411,7 +412,11 @@ const arrViewer  = makeViewer("arrView", false);
 for(const v of [mainViewer,depViewer,arrViewer]) v.scene.screenSpaceCameraController._zoomFactor=1.8;
 // re-sample the wind/current lines when the camera settles
 mainViewer.camera.moveStart.addEventListener(()=>{ const cv=document.getElementById('flowCanvas'); if(cv)cv.style.opacity='0.12'; });
-mainViewer.camera.moveEnd.addEventListener(()=>{ try{ const cv=document.getElementById('flowCanvas'); if(cv)cv.style.opacity='1';
+mainViewer.camera.moveEnd.addEventListener(()=>{ try{
+  // re-render routes when the zoom bucket shifts (route altitude tracks zoom)
+  if(lastKept){ const b=Math.round(Math.log2(Math.max(1,mainViewer.camera.positionCartographic.height))*2);
+    if(b!==altBucket){ altBucket=b; renderRoutes3D(lastKept,lastEnvelope); } }
+  const cv=document.getElementById('flowCanvas'); if(cv)cv.style.opacity='1';
   if(typeof vizMode!=='undefined'&&vizMode==='flow'){ rFlowInvalidate(); rFlowUpdate(); } else renderFieldViz(); }catch(e){} });
 
 // ════════════════════ route endpoints (editable, persisted) ════════════════════
@@ -599,8 +604,17 @@ const DEPTH_OFF_NEAR=2.5e6;
 // Route lines ride ~1.5 km above the ellipsoid: invisible at corridor scale,
 // but they no longer z-fight the globe surface (the old depthFail material
 // masked that) and still vanish correctly behind the horizon.
-const ROUTE_ALT=1500;
-const degArr=(flat)=>{ const a=[]; for(let i=0;i<flat.length;i+=2)a.push(flat[i],flat[i+1],ROUTE_ALT); return Cesium.Cartesian3.fromDegreesArrayHeights(a); };
+// Route altitude scales with camera height: at ocean zooms the coarse far-
+// LOD tile mesh sits ABOVE a fixed 1500 m line and the depth test buries it
+// (polylines can't disableDepthTestDistance — that's why the day-marker
+// POINTS survived where the lines gapped). Scaling keeps harbor-zoom lines
+// hugging the water while whole-ocean views float clear of tile LOD error;
+// the horizon still occludes the far side of the globe naturally.
+function routeAlt(){
+  try{ return Math.max(1500, mainViewer.camera.positionCartographic.height*0.006); }
+  catch(e){ return 1500; }
+}
+const degArr=(flat)=>{ const alt=routeAlt(), a=[]; for(let i=0;i<flat.length;i+=2)a.push(flat[i],flat[i+1],alt); return Cesium.Cartesian3.fromDegreesArrayHeights(a); };
 let routeEntities=[];
 function clearRoutes(){ routeEntities.forEach(e=>mainViewer.entities.remove(e)); routeEntities=[]; }
 function colorA(hex,a){ return Cesium.Color.fromCssColorString(hex).withAlpha(a); }
@@ -643,7 +657,8 @@ function addSegmentedRoute(route,hex,width){
     cur.pts.push(b.lon,b.lat);
   }
   for(const run of runs){
-    if(run.pts.length<4||!run.pts.every(Number.isFinite))continue;
+    if(run.pts.length<4&&runs.length>1)continue; // solo short run only
+    if(!run.pts.every(Number.isFinite))continue;
     const positions=degArr(run.pts);
     if(run.motor){
       routeEntities.push(mainViewer.entities.add({ polyline:{ positions, width:Math.max(2,width-1),
@@ -656,7 +671,10 @@ function addSegmentedRoute(route,hex,width){
   }
 }
 let fleetEntities=[],fleetShown=false;
+let lastKept=null,lastEnvelope=null,altBucket=-1;
 function renderRoutes3D(routes,envelope){
+  lastKept=routes; lastEnvelope=envelope;
+  try{ altBucket=Math.round(Math.log2(Math.max(1,mainViewer.camera.positionCartographic.height))*2); }catch(e){}
   clearRoutes(); fleetEntities=[];
   // Full fleet as a faint density layer, hidden behind the FLEET toggle.
   const etaColor=buildEtaColor(routes);
@@ -1164,11 +1182,43 @@ async function loadCompositeAndRoute(plan,ui){
   const kept=markOutliers(routes);
   const envelope=computeEnvelope(kept);
   renderRoutes3D(kept,envelope); updatePanel(kept,envelope,routes.length-kept.length); buildScrubber(kept);
-  showRangeNotice(kept);
+  showRangeNotice(kept); analyzeCalm(kept);
   document.getElementById('liveStamp').className='live';
   document.getElementById('liveStamp').textContent='Live · via '+plan.label;
   renderBoatList(); updateDepClock();
   ui.loader.classList.add('hidden');
+}
+// ── no-wind zone detection: boats that stall becalmed (never arrive, last
+// sample under 4 kt) mark the zone; if the engine was off, turn it on and
+// reroute — once per passage, loudly announced.
+let calmEntities=[], autoEngagedOnce=false;
+function clearCalmFlag(){ for(const e of calmEntities)mainViewer.entities.remove(e); calmEntities=[];
+  const el=document.getElementById('calmNotice'); if(el)el.style.display='none'; }
+function analyzeCalm(routes){
+  clearCalmFlag();
+  const calm=routes.filter(r=>!r.arrived&&r.path.length>2&&r.path[r.path.length-1].tws<4);
+  if(!calm.length)return;
+  const lats=calm.map(r=>r.path[r.path.length-1].lat).sort((a,b)=>a-b);
+  const lons=calm.map(r=>r.path[r.path.length-1].lon).sort((a,b)=>a-b);
+  const lat=lats[Math.floor(lats.length/2)], lon=lons[Math.floor(lons.length/2)];
+  const R=110e3; // ~60 nm zone marker
+  calmEntities.push(mainViewer.entities.add({ position:Cesium.Cartesian3.fromDegrees(lon,lat,routeAlt()),
+    ellipse:{ semiMajorAxis:R, semiMinorAxis:R, height:routeAlt(),
+      material:colorA('#ffb938',0.10), outline:true, outlineColor:colorA('#ffb938',0.8) },
+    label:{ text:'NO WIND', font:'11px Fira Code, monospace', fillColor:colorA('#ffb938',0.95),
+      disableDepthTestDistance:DEPTH_OFF_NEAR } }));
+  const el=document.getElementById('calmNotice');
+  const pos=Math.abs(lat).toFixed(1)+'°'+(lat>=0?'N':'S')+' '+Math.abs(lon).toFixed(1)+'°'+(lon>=0?'E':'W');
+  if(!MOTORING.enabled&&!autoEngagedOnce){
+    autoEngagedOnce=true;
+    MOTORING.enabled=true; saveMotoring();
+    if(el){ el.innerHTML='<b>⚙ ENGINE AUTO-ON</b> · '+calm.length+'/'+routes.length+' boats becalmed near '+pos+' · rerouting'; el.style.display=''; }
+    if(window.Telemetry)window.Telemetry.send('calm-auto-motor',{lat,lon,count:calm.length});
+    setTimeout(()=>{ try{ if(typeof syncMotorUi==='function')syncMotorUi(); }catch(e){} rerouteAndRender(); },80);
+  }else if(el){
+    el.innerHTML='<b>⚠ NO-WIND ZONE</b> · '+calm.length+'/'+routes.length+' boats stall near '+pos+(MOTORING.enabled?' (engine already on)':'');
+    el.style.display='';
+  }
 }
 function showRangeNotice(routes){
   const el=document.getElementById('rangeNotice'); if(!el)return;
@@ -1243,7 +1293,7 @@ async function rerouteAndRender(){
   const kept=markOutliers(routes);
   const envelope=computeEnvelope(kept);
   renderRoutes3D(kept,envelope); updatePanel(kept,envelope,routes.length-kept.length); buildScrubber(kept);
-  showRangeNotice(kept);
+  showRangeNotice(kept); analyzeCalm(kept);
   if(infoPane)infoPane.classList.remove('recomputing');
   rerouting=false;
   if(rerouteQueued){ rerouteQueued=false; rerouteAndRender(); }
@@ -1337,7 +1387,7 @@ async function loadLiveAndRoute(){
     const kept=markOutliers(routes);
     const envelope=computeEnvelope(kept);
     renderRoutes3D(kept,envelope); updatePanel(kept,envelope,routes.length-kept.length); buildScrubber(kept);
-    showRangeNotice(kept);
+    showRangeNotice(kept); analyzeCalm(kept);
     document.getElementById('liveStamp').className='live';
     const maskNote=(window.LandMask&&window.LandMask.isReady())?'':' · boxes-only mask';
     document.getElementById('liveStamp').textContent=cachedRun
@@ -1432,6 +1482,7 @@ function closePortSearch(){
   portWhich=null;
 }
 async function setPort(which,place){
+  autoEngagedOnce=false;
   ROUTE[which]={name:place.name,lat:place.lat,lon:place.lon};
   try{ localStorage.setItem('meridian.route',JSON.stringify(ROUTE)); }catch(e){}
   START=ROUTE.dep; DEST=ROUTE.arr;
